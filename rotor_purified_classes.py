@@ -178,11 +178,11 @@ class Rotor:
         F: float = 1.1  # Initial guess values to start with
         lambda_inflow: float = 0.2
 
+        theta: float = self.get_pitch(r_distance)
+        sigma: float = self.number_of_blades * self.get_chord_length(r_distance) / (np.pi * self.radius_of_rotors)  # since sigma is not constant
         for i in range(max_iter):
-            theta: float = self.get_pitch(r_distance)
             
             # getting the Cl (lift coefficient)
-            sigma: float = self.number_of_blades * self.get_chord_length(r_distance) / (np.pi * self.radius_of_rotors)  # since sigma is not constant
             
             # Update lambda_inflow using current F
             new_lambda_inflow: float = (
