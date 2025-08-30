@@ -28,6 +28,7 @@ class Helicopter:
         omega = self.omega if omega is None else omega
         pass
         return 0.0
+    
     def find_omega_needed(self, weight: float, vertical_velocity: float, altitude: float) -> float:
         pass
         return 0.0
