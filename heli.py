@@ -29,9 +29,9 @@ class Environment:
         self.wind_velocity = float(input("Please enter the wind velocity (m/s): "))
         self.ISA_OFFSET = float(input("Please enter the ISA offset (K): "))
 
-    def set_atmosphere_parameters(self, temperature_sea_level: float, Reynolds_number: float, 
-                                altitude: float, pressure_sea_level: float, 
-                                Lapse_rate_troposphere: float, wind_velocity: float, 
+    def set_atmosphere_parameters(self, temperature_sea_level: float, Reynolds_number: float,
+                                altitude: float, pressure_sea_level: float,
+                                Lapse_rate_troposphere: float, wind_velocity: float,
                                 ISA_OFFSET: float) -> None:
         self.environment_set = True
         self.temperature_sea_level = temperature_sea_level
@@ -53,7 +53,7 @@ class Environment:
         if not self.environment_set:
             raise ValueError("Environment parameters have not been set.")
         altitude: float = altitude if altitude is not None else self.altitude
-        return self.pressure_sea_level * ((temperature / self.temperature_sea_level) ** 
+        return self.pressure_sea_level * ((temperature / self.temperature_sea_level) **
                                         (self.gravitational_acceleration / (self.Lapse_rate_troposphere * self.Specific_gas_constant)))
 
     def get_speed_of_sound(self, temperature: float) -> float:
@@ -103,11 +103,11 @@ class Rotor:
         self.tip_chord = float(input("Please enter the tip chord (m): "))
         self.root_pitch = np.deg2rad(float(input("Please enter the root pitch (degrees): ")))
         self.slope_pitch = float(input("Please enter the slope of the pitch: "))
-        
 
-    def set_rotor_parameters(self, number_of_blades: int, blade_mass: float, 
-                           NACA_for_airfoil: str, radius_of_rotors: float, root_cutout: float, 
-                           angle_of_attack: float, root_chord: float, tip_chord: float, 
+
+    def set_rotor_parameters(self, number_of_blades: int, blade_mass: float,
+                           NACA_for_airfoil: str, radius_of_rotors: float, root_cutout: float,
+                           angle_of_attack: float, root_chord: float, tip_chord: float,
                            root_pitch: float, slope_pitch: float) -> None:
         self.parameters_set = True
         self.number_of_blades = number_of_blades
@@ -143,22 +143,22 @@ class Rotor:
     def elemental_inflow_ratio(self, r_distance: float, climb_velocity: float, omega: float,
                              max_iter: int = 100, tol: float = 1e-6) -> Tuple[float, float]:
         """Inflow for each blade section elementally
-        
+
         λ = sqrt((σa/16F - λc/2)² + σa/8F * θ * r/R) - (σa/16F - λc/2)
-        
+
         where:
         λc = V/ΩR,  λ = (V + v)/ΩR
         F = (2/π)cos⁻¹(e^(-f))  where f = b(1-r/R)/λ
         dT = 4πρrF(V+v)vdr = 4πρrF(λωr)(λωr - V)dr
         T = b∫[Rc to R]dT
-        
+
         * we also include prandtl's tip loss model in the inflow ratio formula
-        * Since Lambda is dependent on F and f further is dependent on lambda we have to 
+        * Since Lambda is dependent on F and f further is dependent on lambda we have to
           iteratively find out the value of Lambda until solution stabilizes.
         """
         if not self.parameters_set:
             raise ValueError("Rotor parameters have not been set.")
-            
+
         lambda_c: float = climb_velocity / (omega * self.radius_of_rotors)
         a: float = 5.75  # Define some useful parameters
         F: float = 1.1  # Initial guess values to start with
@@ -166,10 +166,10 @@ class Rotor:
 
         for _ in range(max_iter):
             theta: float = self.get_pitch(r_distance)
-            
+
             # getting the Cl (lift coefficient)
             sigma: float = self.number_of_blades * self.get_chord_length(r_distance) / (np.pi * self.radius_of_rotors)  # since sigma is not constant
-            
+
             # Update lambda_inflow using current F
             new_lambda_inflow: float = (
                 np.sqrt(((sigma * a) / (16 * F) - (lambda_c / 2))**2
@@ -209,20 +209,20 @@ class Rotor:
         alpha_eff: float = self.get_alpha_effective_r(r_distance, climb_velocity)
         return a * alpha_eff
 
-    def get_cD(self, r_distance: float, climb_velocity: float, CD0: float = 0.005, 
+    def get_cD(self, r_distance: float, climb_velocity: float, CD0: float = 0.005,
              k: float = 0.1, a: float = 5.75) -> float:
- 
+
         if not self.parameters_set:
             raise ValueError("Rotor parameters have not been set.")
         alpha_eff: float = self.get_alpha_effective_r(r_distance, climb_velocity)
         return CD0 + k * ((a * alpha_eff) ** 2)
 
-    def elemental_thrust(self, r_distance: float, dr: float, climb_velocity: float, omega:float, 
+    def elemental_thrust(self, r_distance: float, dr: float, climb_velocity: float, omega:float,
                         density: float = None) -> float:
         assert density is not None, "Density must be provided in elemental_thrust function"
         """
         Returns the thrust at r distance from the root distance from chord
-        
+
         Calls the elemental_inflow_ratio method to get the inflow ratio.
 
         Parameters
@@ -237,7 +237,7 @@ class Rotor:
             Rotor angular velocity.
         density : float
             Air density.
-        
+
         Returns
         -------
         float
@@ -252,6 +252,19 @@ class Rotor:
         return dT
 
     def elemental_torque(self, r_distance: float, dr: float, climb_velocity: float, omega: float, density: float) -> float:
+        """
+        returns the torque it requires to move that element due to drag on it.
+
+        inputs:
+        1. r_distance
+        2. dr
+        3. climb_velocity
+
+        returns:
+        elemental torque
+
+        """
+
         if not self.parameters_set:
             raise ValueError("Rotor parameters have not been set.")
         dT: float = self.elemental_thrust(r_distance, dr, climb_velocity, omega=omega, density=density)
@@ -259,6 +272,19 @@ class Rotor:
 
     def total_thrust(self, climb_velocity: float, omega: float, density: float, n_divisions: int = 50) -> float:
         """Calculating the thrust from all rotors"""
+
+        """Calculating the thrust from all rotors
+
+          inputs:
+          1. climb_velocity
+          2. n_divisions : the no.of elements we are taking
+          3. density
+
+          returns:
+          total thrust
+
+        """
+
         if not self.parameters_set:
             raise ValueError("Rotor parameters have not been set.")
         r: np.ndarray = np.linspace(self.root_cutout, self.radius_of_rotors, n_divisions)
@@ -271,6 +297,20 @@ class Rotor:
 
     def total_torque(self, climb_velocity: float, omega: float,
                     density: float, n_divisions: int = 50,  cm: float = 0.1) -> float:  # per blade
+        """
+          calculates the net torque required to generate the thrust
+
+          inputs:
+          1. climb_velocity
+          2. n_divisions
+          3. density
+          4. cm
+
+          returns:
+          total torque
+
+        """
+
         if not self.parameters_set:
             raise ValueError("Rotor parameters have not been set.")
         r: np.ndarray = np.linspace(self.root_cutout, self.radius_of_rotors, n_divisions)
@@ -284,6 +324,18 @@ class Rotor:
         return net_moment
 
     def total_power(self, climb_velocity: float, omega: float, density: float, n_divisions: int = 50) -> float:
+        """
+          calculates the net power required to generate the thrust
+
+          inputs:
+          1. climb_velocity
+          2. n_divisions
+
+          returns:
+          total power
+
+        """
+
         if not self.parameters_set:
             raise ValueError("Rotor parameters have not been set.")
         r: np.ndarray = np.linspace(self.root_cutout, self.radius_of_rotors, n_divisions)
@@ -298,19 +350,37 @@ class Rotor:
         return net_power
 
     def calculate_performance(self, climb_velocity: float, omega: float, density: float = 1.2, n_divisions: int = 50, cm: float = 0.1) -> Dict[str, float]:
+        """
+          calculates the performance of the rotor
+
+          inputs:
+          1. climb_velocity
+          2. n_divisions
+          3. density
+
+          returns:
+            performance
+              1. thrust
+              2. torque
+              3. power
+              4. lift
+              5. drag
+
+        """
+
         if not self.parameters_set:
             raise ValueError("Rotor parameters have not been set.")
-        
+
         r: np.ndarray = np.linspace(self.root_cutout, self.radius_of_rotors, n_divisions)
         delta_r: float = r[1] - r[0]
-        
+
         dL_list: List[float] = []
         dD_list: List[float] = []
         dT_list: List[float] = []
         dFx_list: List[float] = []
         dP_list: List[float] = []
         dtorque_list: List[float] = []
-        
+
         for i in range(len(r)):
             chord: float = self.get_chord_length(r[i])
             cl: float = self.get_cL(r[i], climb_velocity)
@@ -318,23 +388,23 @@ class Rotor:
             lambda_inflow: float
             lambda_inflow, _ = self.elemental_inflow_ratio(r[i], climb_velocity, omega=omega, density=density)
             phi: float = self.get_phi_r(r[i], climb_velocity)
-            
+
             velocity_squared: float = (omega * r[i]) ** 2 + (lambda_inflow * omega * self.radius_of_rotors) ** 2
-            
+
             dL: float = 0.5 * density * chord * cl * velocity_squared
             dD: float = 0.5 * density * chord * cd * velocity_squared
             dT: float = (dL * np.cos(phi) - dD * np.sin(phi)) * delta_r
             dFx: float = (dD * np.cos(phi) + dL * np.sin(phi)) * delta_r
             dP: float = omega * r[i] * dFx
             dtorque: float = r[i] * dFx
-            
+
             dL_list.append(dL)
             dD_list.append(dD)
             dT_list.append(dT)
             dFx_list.append(dFx)
             dP_list.append(dP)
             dtorque_list.append(dtorque)
-        
+
         performance: Dict[str, float] = {
             'thrust': np.sum(dT_list) * self.number_of_blades,
             'torque': np.sum(dtorque_list) * self.number_of_blades,
@@ -343,7 +413,7 @@ class Rotor:
             'lift': np.sum(dL_list),
             'drag': np.sum(dD_list)
         }
-        
+
         return performance
 
 class Helicopter:
@@ -354,14 +424,14 @@ class Helicopter:
         self.fuselage_set: bool = False
         self.engine_set: bool = False
         self.rotor_set: bool = False
-        
+
         self.fuselage_mass: Optional[float] = None
         self.fuselage_length: Optional[float] = None
         self.fuselage_width: Optional[float] = None
         self.fuselage_height: Optional[float] = None
         self.fuselage_cl: Optional[float] = None
         self.fuselage_cd: Optional[float] = None
-        
+
         self.engine_mass: Optional[float] = None
         self.engine_BSFC: Optional[float] = None
         self.engine_shaft_power_conversion_efficiency: Optional[float] = None
@@ -377,7 +447,7 @@ class Helicopter:
         self.fuselage_cl = float(input("Please enter the fuselage lift coefficient (Cl): "))
         self.fuselage_cd = float(input("Please enter the fuselage drag coefficient (Cd): "))
 
-    def set_fuselage_parameters(self, mass: float, length: float, width: float, 
+    def set_fuselage_parameters(self, mass: float, length: float, width: float,
                               height: float, cl: float, cd: float) -> None:
         self.fuselage_set = True
         self.fuselage_mass = mass
@@ -395,8 +465,8 @@ class Helicopter:
         self.engine_shaft_power_conversion_efficiency = float(input("Please enter the shaft power conversion efficiency: "))
         self.engine_fractional_power_tail_rotor = float(input("Please enter the fractional power of the tail rotor: "))
 
-    def set_engine_parameters(self, mass: float, BSFC: float, 
-                            shaft_power_conversion_efficiency: float, 
+    def set_engine_parameters(self, mass: float, BSFC: float,
+                            shaft_power_conversion_efficiency: float,
                             fractional_power_tail_rotor: float) -> None:
         self.engine_set = True
         self.engine_mass = mass
@@ -428,13 +498,13 @@ class Helicopter:
     def calculate_hover_performance(self,n_divisions: int = 50) -> Dict[str, float]:
         if not self.rotor_set:
             raise ValueError("Rotor has not been set up.")
-        
+
         density: float = 1.2
         if self.environment and self.environment.environment_set:
             temperature: float = self.environment.get_temperature()
             pressure: float = self.environment.get_pressure(temperature)
             density = self.environment.get_density(temperature, pressure)
-        
+
         climb_velocity = 0
         return self.rotor.calculate_performance(climb_velocity, n_divisions, density)
 
@@ -450,12 +520,12 @@ class Helicopter:
     def can_hover(self, climb_velocity: float = 0, n_divisions: int = 50) -> Tuple[bool, str]:
         if not self.rotor_set:
             return False, "Rotor parameters not set"
-        
+
         performance: Dict[str, float] = self.calculate_hover_performance(climb_velocity, n_divisions)
         thrust_required: float = self.calculate_thrust_required_for_hover()
-        
+
         if performance['thrust'] >= thrust_required:
             return True, f"Can hover. Available thrust: {performance['thrust']:.1f} N, Required: {thrust_required:.1f} N"
         else:
             return False, f"Cannot hover. Available thrust: {performance['thrust']:.1f} N, Required: {thrust_required:.1f} N"
-    
+
