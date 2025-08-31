@@ -84,7 +84,6 @@ class Rotor:
         self.NACA_for_airfoil: Optional[str] = None
         self.radius_of_rotors: Optional[float] = None
         self.root_cutout: Optional[float] = None
-        self.angle_of_attack: Optional[float] = None
         self.root_chord: Optional[float] = None
         self.tip_chord: Optional[float] = None
         self.root_pitch: Optional[float] = None
@@ -98,7 +97,6 @@ class Rotor:
         self.NACA_for_airfoil = input("Please enter the NACA number of the airfoil: ")
         self.radius_of_rotors = float(input("Please enter the radius of the rotors (m): "))
         self.root_cutout = float(input("Please enter the root cutout of the rotors (m): "))
-        self.angle_of_attack = np.deg2rad(float(input("Please enter the angle of attack (degrees): ")))
         self.root_chord = float(input("Please enter the root chord (m): "))
         self.tip_chord = float(input("Please enter the tip chord (m): "))
         self.root_pitch = np.deg2rad(float(input("Please enter the root pitch (degrees): ")))
@@ -106,8 +104,7 @@ class Rotor:
 
 
     def set_rotor_parameters(self, number_of_blades: int, blade_mass: float,
-                           NACA_for_airfoil: str, radius_of_rotors: float, root_cutout: float,
-                           angle_of_attack: float, root_chord: float, tip_chord: float,
+                           NACA_for_airfoil: str, radius_of_rotors: float, root_cutout: float, root_chord: float, tip_chord: float,
                            root_pitch: float, slope_pitch: float) -> None:
         self.parameters_set = True
         self.number_of_blades = number_of_blades
@@ -115,7 +112,6 @@ class Rotor:
         self.NACA_for_airfoil = NACA_for_airfoil
         self.radius_of_rotors = radius_of_rotors
         self.root_cutout = root_cutout
-        self.angle_of_attack = np.deg2rad(angle_of_attack)
         self.root_chord = root_chord
         self.tip_chord = tip_chord
         self.root_pitch = np.deg2rad(root_pitch)
@@ -136,7 +132,7 @@ class Rotor:
     def get_Cl_Cd_Cm(self, naca_number: str, alpha: float) -> Tuple[float, float, float]:
         # Extract coefficients
         cl: float = 5.75
-        cd: float = 0.013
+        cd: float = 0.0113
         cm: float = 0.03
         return cl, cd, cm
 
@@ -215,8 +211,8 @@ class Rotor:
         alpha_eff: float = self.get_alpha_effective_r(r_distance, climb_velocity, omega, lambda_inflow)
         return a * alpha_eff
 
-    def get_cD(self, r_distance: float, climb_velocity: float, omega: float, lambda_inflow: float = None, CD0: float = 0.005,
-             k: float = 0.1, a: float = 5.75) -> float:
+    def get_cD(self, r_distance: float, climb_velocity: float, omega: float, lambda_inflow: float = None, CD0: float = 0.0113,
+             k: float = 0.037807, a: float = 5.75) -> float:
 
         if not self.parameters_set:
             raise ValueError("Rotor parameters have not been set.")
