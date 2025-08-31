@@ -537,9 +537,9 @@ class Rotor:
     def is_rotor_stalling(self, vertical_velocity: float, omega: float, divisions: int = 10) -> bool:
         if(self.default_airfoil):
             return False
-        dr = self.radius_of_rotors / divisions
+        dr = (self.radius_of_rotors - self.root_cutout) / divisions
         for i in range(divisions):
-            _, stalling = self.get_cL(r_distance=i * dr, climb_velocity=vertical_velocity, omega=omega)
+            _, stalling = self.get_cL(r_distance= self.root_cutout + (i+0.5) * dr, climb_velocity=vertical_velocity, omega=omega)
             if stalling:
                 return True
         return False
