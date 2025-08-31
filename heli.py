@@ -520,17 +520,12 @@ class Helicopter:
         # Aircraft engine parameters
         self.engine_set = True
         self.engine_mass = float(input("Please enter the mass of the engine (kg): "))
-        self.engine_BSFC = float(input("Please enter the BSFC of the engine (kg/kWh): "))
-        self.engine_shaft_power_conversion_efficiency = float(input("Please enter the shaft power conversion efficiency: "))
         self.engine_max_power = float(input("Please enter the maximum power of the engine (kW): "))
         self.engine_max_available_power = self.engine_max_power * (1 - self.power_loss)
 
-    def set_engine_parameters(self, mass: float, BSFC: float,
-                            shaft_power_conversion_efficiency: float, max_power: float) -> None:
+    def set_engine_parameters(self, mass: float, max_power: float) -> None:
         self.engine_set = True
         self.engine_mass = mass
-        self.engine_BSFC = BSFC
-        self.engine_shaft_power_conversion_efficiency = shaft_power_conversion_efficiency
         self.engine_max_power = max_power
         self.engine_max_available_power = self.engine_max_power * (1 - self.power_loss)
 
@@ -674,8 +669,11 @@ class MissionPlanner:
         self.fuel_weight = float(input("Enter the fuel weight of the helicopter in kg: "))
         self.fuel_specific_energy = 1000*float(input("Enter the fuel specific energy in kJ/kg: "))
         reserve_fuel_fraction  = float(input("Enter the reserve fuel fraction (e.g., 0.2 for 20%): "))
-        self.min_fuel = self.fuel_weight * reserve_fuel_fraction
-        self.max_fuel = self.fuel_weight
+        self.reserved_fuel = self.fuel_weight * reserve_fuel_fraction
+        self.fuel_weight -= self.reserved_fuel
+        self.dry_weight += self.reserved_fuel
+        # self.min_fuel = self.fuel_weight * reserve_fuel_fraction
+        self.max_fuel = self.fuel_weight + self.reserved_fuel
 
     def set_flight_parameters_programmatic(self, dry_weight: float, fuel_weight: float, 
                                           fuel_specific_energy_kj_kg: float, reserve_fuel_fraction: float):
@@ -684,8 +682,12 @@ class MissionPlanner:
         self.dry_weight = dry_weight
         self.fuel_weight = fuel_weight
         self.fuel_specific_energy = 1000 * fuel_specific_energy_kj_kg  # Convert kJ/kg to J/kg
-        self.min_fuel = self.fuel_weight * reserve_fuel_fraction
-        self.max_fuel = self.fuel_weight
+        self.reserved_fuel = self.fuel_weight * reserve_fuel_fraction
+        self.fuel_weight -= self.reserved_fuel
+        self.dry_weight += self.reserved_fuel
+        # self.min_fuel = self.fuel_weight * reserve_fuel_fraction
+        self.max_fuel = self.fuel_weight + self.reserved_fuel
+        
         
     # def set_flight_path(self):
     #     if not self.flight_parameters_set:
