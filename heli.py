@@ -440,6 +440,20 @@ class Rotor:
         }
 
         return performance
+    
+    def find_omega_needed_uncoupled(self, thrust_needed, vertical_velocity: float, altitude: float, initial_guess: float, iterations: int= 10, tol: float = 0.05) -> float:
+        temperature = self.environment.get_temperature(altitude)
+        density = self.environment.get_density(temperature=temperature)
+        omega = initial_guess
+        for _ in range(iterations):
+            thrust = self.total_thrust(vertical_velocity, omega, density)
+            if abs(thrust - thrust_needed) < tol:
+                return omega
+            d_fraction = (thrust_needed - thrust) / thrust
+            omega *= (1 + d_fraction*0.5)
+        if(abs(thrust - thrust_needed) > 10*tol):
+            print("Warning: Omega calculation did not converge")
+        return omega
 
 class Helicopter:
     """Aircraft Helicopter Parameters from the user"""
@@ -448,45 +462,58 @@ class Helicopter:
         self.main_rotor: Optional['Rotor'] = None
         self.tail_rotor: Optional['Rotor'] = None
         self.fuselage_set: bool = False
+        self.tail_set: bool = False
         self.engine_set: bool = False
         self.main_rotor_set: bool = False
         self.tail_rotor_set: bool = False
-        #For now max omega is infinity
+        #For now max omega is infinity. Will make it better later
         self.max_omega: float = float('inf')
 
         self.fuselage_mass: Optional[float] = None
         self.fuselage_length: Optional[float] = None
         self.fuselage_width: Optional[float] = None
         self.fuselage_height: Optional[float] = None
+        self.tail_mass: Optional[float] = None
+        self.tail_length: Optional[float] = None
+        self.tail_width: Optional[float] = None
+        self.tail_height: Optional[float] = None
         self.main_rotor_position: Optional[float] = None
         self.tail_rotor_position: Optional[float] = None
 
 
         self.engine_mass: Optional[float] = None
-        self.engine_BSFC: Optional[float] = None
-        self.engine_shaft_power_conversion_efficiency: Optional[float] = None
         self.engine_max_power: Optional[float] = None
         self.power_loss = 0.1
         self.engine_max_available_power = None
 
     def get_fuselage_parameters(self) -> None:
         # fuselage parameters
-        self.fuselage_set = True
         self.fuselage_mass = float(input("Please enter the fuselage mass (kg): "))
         self.fuselage_length = float(input("Please enter the fuselage length (m): "))
         self.fuselage_width = float(input("Please enter the fuselage width (m): "))
         self.fuselage_height = float(input("Please enter the fuselage height (m): "))
+        self.tail_mass = float(input("Please enter the tail mass (kg): "))
+        self.tail_length = float(input("Please enter the tail length (m): "))
+        self.tail_width = float(input("Please enter the tail width (m): "))
+        self.tail_height = float(input("Please enter the tail height (m): "))
+        self.fuselage_set = True
+        self.tail_set = True
 
 
     def set_fuselage_parameters(self, mass: float, length: float, width: float,
-                              height: float, cl: float, cd: float) -> None:
+                              height: float, tail_mass: float, tail_length: float,
+                              tail_width: float, tail_height: float) -> None:
         self.fuselage_set = True
+        self.tail_set = True
         self.fuselage_mass = mass
         self.fuselage_length = length
         self.fuselage_width = width
         self.fuselage_height = height
-        self.fuselage_cl = cl
-        self.fuselage_cd = cd
+        self.tail_mass = tail_mass
+        self.tail_length = tail_length
+        self.tail_width = tail_width
+        self.tail_height = tail_height
+        
 
     def get_engine_parameters(self) -> None:
         # Aircraft engine parameters
@@ -546,41 +573,41 @@ class Helicopter:
         if self.tail_rotor_set and self.tail_rotor:
             total_mass += self.tail_rotor.blade_mass * self.tail_rotor.number_of_blades
         return total_mass
+    """
+    # def calculate_hover_performance(self, omega: float, n_divisions: int = 50) -> Dict[str, float]:
+    #     if not self.main_rotor_set:
+    #         raise ValueError("Rotor has not been set up.")
 
-    def calculate_hover_performance(self, omega: float, n_divisions: int = 50) -> Dict[str, float]:
-        if not self.main_rotor_set:
-            raise ValueError("Rotor has not been set up.")
+    #     density: float = 1.2
+    #     if self.environment and self.environment.environment_set:
+    #         temperature: float = self.environment.get_temperature()
+    #         pressure: float = self.environment.get_pressure(temperature)
+    #         density = self.environment.get_density(temperature, pressure)
 
-        density: float = 1.2
-        if self.environment and self.environment.environment_set:
-            temperature: float = self.environment.get_temperature()
-            pressure: float = self.environment.get_pressure(temperature)
-            density = self.environment.get_density(temperature, pressure)
+    #     climb_velocity = 0
+    #     return self.main_rotor.calculate_performance(climb_velocity, omega, density, n_divisions)
 
-        climb_velocity = 0
-        return self.main_rotor.calculate_performance(climb_velocity, omega, density, n_divisions)
+    # def calculate_thrust_required_for_hover(self) -> float:
+    #     total_mass: float = self.get_total_mass()
+    #     g: float
+    #     if self.environment and self.environment.environment_set:
+    #         g = self.environment.gravitational_acceleration
+    #     else:
+    #         g = 9.80665
+    #     return total_mass * g
 
-    def calculate_thrust_required_for_hover(self) -> float:
-        total_mass: float = self.get_total_mass()
-        g: float
-        if self.environment and self.environment.environment_set:
-            g = self.environment.gravitational_acceleration
-        else:
-            g = 9.80665
-        return total_mass * g
+    # def can_hover(self, omega: float, climb_velocity: float = 0, n_divisions: int = 50) -> Tuple[bool, str]:
+    #     if not self.main_rotor_set:
+    #         return False, "Rotor parameters not set"
 
-    def can_hover(self, omega: float, climb_velocity: float = 0, n_divisions: int = 50) -> Tuple[bool, str]:
-        if not self.main_rotor_set:
-            return False, "Rotor parameters not set"
+    #     performance: Dict[str, float] = self.calculate_hover_performance(omega, n_divisions)
+    #     thrust_required: float = self.calculate_thrust_required_for_hover()
 
-        performance: Dict[str, float] = self.calculate_hover_performance(omega, n_divisions)
-        thrust_required: float = self.calculate_thrust_required_for_hover()
-
-        if performance['thrust'] >= thrust_required:
-            return True, f"Can hover. Available thrust: {performance['thrust']:.1f} N, Required: {thrust_required:.1f} N"
-        else:
-            return False, f"Cannot hover. Available thrust: {performance['thrust']:.1f} N, Required: {thrust_required:.1f} N"
-    
+    #     if performance['thrust'] >= thrust_required:
+    #         return True, f"Can hover. Available thrust: {performance['thrust']:.1f} N, Required: {thrust_required:.1f} N"
+    #     else:
+    #         return False, f"Cannot hover. Available thrust: {performance['thrust']:.1f} N, Required: {thrust_required:.1f} N"
+    """
     def find_tail_rotor_power(self, thrust_needed:float, density: float, initial_guess_omega: float = 0, max_iterations: int = 10, tol: float = 0.05) -> float:
         omega = initial_guess_omega
         performance = None
@@ -596,7 +623,7 @@ class Helicopter:
     
     def find_power_needed(self, weight: float, vertical_velocity: float, altitude: float, omega: float = None) -> float:
         if omega is None:
-            omega = self.find_omega_needed(weight, vertical_velocity, altitude, initial_guess=30.0)
+            omega = self.main_rotor.find_omega_needed_uncoupled(thrust_needed=weight, vertical_velocity=vertical_velocity, altitude=altitude, initial_guess=30.0)
         temperature = self.environment.get_temperature(altitude=altitude)
         density = self.environment.get_density(temperature=temperature)
         performance = self.main_rotor.calculate_performance(vertical_velocity, omega, density)
@@ -614,12 +641,14 @@ class Helicopter:
         pressure: float = self.environment.get_pressure(temperature)
         density: float = self.environment.get_density(temperature, pressure)
 
-        performance = self.main_rotor.calculate_performance(vertical_velocity, omega, density)
-        return performance['thrust']
+        # performance = self.main_rotor.calculate_performance(vertical_velocity, omega, density)
+        thrust = self.main_rotor.total_thrust(vertical_velocity, omega, density)
+        return thrust
 
     def find_fuselage_vertical_drag(self, vertical_velocity: float, altitude: float, omega: float = None) -> float:
         pass
         return 0.0
+    
 
     def find_omega_needed(self, weight: float, vertical_velocity: float, altitude: float, initial_guess: float, iterations: int= 10, tol: float = 0.05) -> float:
         gravity = self.environment.gravitational_acceleration
@@ -673,6 +702,7 @@ class MissionPlanner:
     #         return
     
     """
+    
     If True, operation unsuccessfull.
     In that case first arguement will be the error code
     -2 -> Flight parameters not set
@@ -693,9 +723,10 @@ class MissionPlanner:
         dt = delta_t / divisions 
         fuel_consumed_weight = 0.0
         stalling = False
+        g = self.helicopter.environment.gravitational_acceleration
         fuel_specific_energy_inv = 1.0 / self.fuel_specific_energy
         for i in range(divisions):
-            omega_needed = self.helicopter.find_omega_needed(self.dry_weight + self.fuel_weight-fuel_consumed_weight, climb_rate, altitude=altitude, initial_guess=30.0)
+            omega_needed = self.helicopter.main_rotor.find_omega_needed_uncoupled((self.dry_weight + self.fuel_weight-fuel_consumed_weight)*g, climb_rate, altitude=altitude, initial_guess=30.0)
             if(omega_needed>self.max_omega):
                 return [1, True]
             if i % stall_check_interval == 0:
@@ -722,7 +753,7 @@ class MissionPlanner:
         dt = duration / divisions
         fuel_consumed = 0.0
         fuel_specific_energy_inv = 1.0 / self.fuel_specific_energy
-        omega_needed = self.helicopter.find_omega_needed(self.dry_weight + self.fuel_weight, 0, altitude=altitude, initial_guess=30.0)
+        omega_needed = self.helicopter.main_rotor.find_omega_needed_uncoupled((self.dry_weight + self.fuel_weight)*self.helicopter.environment.gravitational_acceleration, 0, altitude=altitude, initial_guess=30.0)
 
         
         if(omega_needed>self.helicopter.max_omega):
@@ -733,7 +764,7 @@ class MissionPlanner:
         if(self.helicopter.is_helicopter_stalling(0, altitude=altitude, omega=omega_needed)):
             return [0, True]
         for i in range(divisions):
-            omega_needed = self.helicopter.find_omega_needed(self.dry_weight + self.fuel_weight, 0, altitude=altitude, initial_guess=30.0)
+            omega_needed = self.helicopter.main_rotor.find_omega_needed_uncoupled((self.dry_weight + self.fuel_weight)*self.helicopter.environment.gravitational_acceleration, 0, altitude=altitude, initial_guess=30.0)
             power_needed = self.helicopter.find_power_needed(self.dry_weight + self.fuel_weight - fuel_consumed, 0, altitude=altitude)
             fuel_consumed += power_needed * dt * fuel_specific_energy_inv
         return [fuel_consumed, False]
@@ -743,7 +774,7 @@ class MissionPlanner:
             print("Flight parameters not set. Please set them first.")
             return -2, True
 
-        omega_needed = self.helicopter.find_omega_needed(self.dry_weight + self.fuel_weight, 0, altitude=altitude, initial_guess=30.0)
+        omega_needed = self.helicopter.main_rotor.find_omega_needed_uncoupled((self.dry_weight + self.fuel_weight)*self.helicopter.environment.gravitational_acceleration, 0, altitude=altitude, initial_guess=30.0)
         if(self.helicopter.is_helicopter_stalling(0, altitude=altitude, omega=omega_needed)):
             return 0, True
         
@@ -754,7 +785,7 @@ class MissionPlanner:
     
         
         while fuel_remaining > 0:
-            omega_needed = self.helicopter.find_omega_needed(self.dry_weight + fuel_remaining, 0, altitude=altitude, initial_guess=30.0)
+            omega_needed = self.helicopter.main_rotor.find_omega_needed_uncoupled((self.dry_weight + fuel_remaining)*self.helicopter.environment.gravitational_acceleration, 0, altitude=altitude, initial_guess=30.0)
             power_needed = self.helicopter.find_power_needed(self.dry_weight + fuel_remaining, 0, altitude=altitude, omega=omega_needed)
             fuel_remaining -= power_needed * dt * fuel_specific_energy_inv
             time += dt
