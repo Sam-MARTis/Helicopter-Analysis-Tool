@@ -3,7 +3,7 @@ from typing import Optional, Tuple, Dict, List, Union
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
-
+from time import sleep
 
 class Environment:
     def __init__(self) -> None:
@@ -141,7 +141,7 @@ class Rotor:
         return cl, cd, cm
 
     def elemental_inflow_ratio(self, r_distance: float, climb_velocity: float, omega: float,
-                             max_iter: int = 100, tol: float = 1e-6) -> Tuple[float, float]:
+                             max_iter: int = 20, tol: float = 1e-6) -> Tuple[float, float]:
         """Inflow for each blade section elementally
 
         λ = sqrt((σa/16F - λc/2)² + σa/8F * θ * r/R) - (σa/16F - λc/2)
@@ -189,32 +189,32 @@ class Rotor:
 
         return lambda_inflow, F
 
-    def get_phi_r(self, r_distance: float, climb_velocity: float) -> float:
+    def get_phi_r(self, r_distance: float, climb_velocity: float, lambda_inflow: float = None) -> float:
         if not self.parameters_set:
             raise ValueError("Rotor parameters have not been set.")
-        lambda_inflow: float
-        lambda_inflow, _ = self.elemental_inflow_ratio(r_distance, climb_velocity)
+        if lambda_inflow is None:
+            lambda_inflow, _ = self.elemental_inflow_ratio(r_distance, climb_velocity)
         return np.arctan(lambda_inflow * self.radius_of_rotors / r_distance)
 
-    def get_alpha_effective_r(self, r_distance: float, climb_velocity: float) -> float:
+    def get_alpha_effective_r(self, r_distance: float, climb_velocity: float, lambda_inflow: float = None) -> float:
         if not self.parameters_set:
             raise ValueError("Rotor parameters have not been set.")
-        phi: float = self.get_phi_r(r_distance, climb_velocity)
+        phi: float = self.get_phi_r(r_distance, climb_velocity, lambda_inflow)
         theta: float = self.get_pitch(r_distance)
         return theta - phi
 
-    def get_cL(self, r_distance: float, climb_velocity: float, a: float = 5.75) -> float:
+    def get_cL(self, r_distance: float, climb_velocity: float, lambda_inflow: float = None, a: float = 5.75) -> float:
         if not self.parameters_set:
             raise ValueError("Rotor parameters have not been set.")
-        alpha_eff: float = self.get_alpha_effective_r(r_distance, climb_velocity)
+        alpha_eff: float = self.get_alpha_effective_r(r_distance, climb_velocity, lambda_inflow)
         return a * alpha_eff
 
-    def get_cD(self, r_distance: float, climb_velocity: float, CD0: float = 0.005,
+    def get_cD(self, r_distance: float, climb_velocity: float, lambda_inflow: float = None, CD0: float = 0.005,
              k: float = 0.1, a: float = 5.75) -> float:
 
         if not self.parameters_set:
             raise ValueError("Rotor parameters have not been set.")
-        alpha_eff: float = self.get_alpha_effective_r(r_distance, climb_velocity)
+        alpha_eff: float = self.get_alpha_effective_r(r_distance, climb_velocity, lambda_inflow)
         return CD0 + k * ((a * alpha_eff) ** 2)
 
     def elemental_thrust(self, r_distance: float, dr: float, climb_velocity: float, omega:float,
@@ -349,7 +349,7 @@ class Rotor:
         net_power: float = self.number_of_blades * np.sum(store_dT)
         return net_power
 
-    def calculate_performance(self, climb_velocity: float, omega: float, density: float = 1.2, n_divisions: int = 50, cm: float = 0.1) -> Dict[str, float]:
+    def calculate_performance(self, climb_velocity: float, omega: float, density: float, n_divisions: int = 50, cm: float = 0.1) -> Dict[str, float]:
         """
           calculates the performance of the rotor
 
@@ -383,11 +383,10 @@ class Rotor:
 
         for i in range(len(r)):
             chord: float = self.get_chord_length(r[i])
-            cl: float = self.get_cL(r[i], climb_velocity)
-            cd: float = self.get_cD(r[i], climb_velocity)
-            lambda_inflow: float
             lambda_inflow, _ = self.elemental_inflow_ratio(r[i], climb_velocity, omega=omega, density=density)
-            phi: float = self.get_phi_r(r[i], climb_velocity)
+            cl: float = self.get_cL(r[i], climb_velocity, lambda_inflow)
+            cd: float = self.get_cD(r[i], climb_velocity, lambda_inflow)
+            phi: float = self.get_phi_r(r[i], climb_velocity, lambda_inflow=lambda_inflow)
 
             velocity_squared: float = (omega * r[i]) ** 2 + (lambda_inflow * omega * self.radius_of_rotors) ** 2
 
@@ -420,17 +419,20 @@ class Helicopter:
     """Aircraft Helicopter Parameters from the user"""
     def __init__(self, environment: Optional['Environment'] = None) -> None:
         self.environment: Optional['Environment'] = environment if environment else Environment()
-        self.rotor: Optional['Rotor'] = None
+        self.main_rotor: Optional['Rotor'] = None
+        self.tail_rotor: Optional['Rotor'] = None
         self.fuselage_set: bool = False
         self.engine_set: bool = False
-        self.rotor_set: bool = False
+        self.main_rotor_set: bool = False
+        self.tail_rotor_set: bool = False
 
         self.fuselage_mass: Optional[float] = None
         self.fuselage_length: Optional[float] = None
         self.fuselage_width: Optional[float] = None
         self.fuselage_height: Optional[float] = None
-        self.fuselage_cl: Optional[float] = None
-        self.fuselage_cd: Optional[float] = None
+        self.main_rotor_position: Optional[float] = None
+        self.tail_rotor_position: Optional[float] = None
+
 
         self.engine_mass: Optional[float] = None
         self.engine_BSFC: Optional[float] = None
@@ -444,8 +446,7 @@ class Helicopter:
         self.fuselage_length = float(input("Please enter the fuselage length (m): "))
         self.fuselage_width = float(input("Please enter the fuselage width (m): "))
         self.fuselage_height = float(input("Please enter the fuselage height (m): "))
-        self.fuselage_cl = float(input("Please enter the fuselage lift coefficient (Cl): "))
-        self.fuselage_cd = float(input("Please enter the fuselage drag coefficient (Cd): "))
+
 
     def set_fuselage_parameters(self, mass: float, length: float, width: float,
                               height: float, cl: float, cd: float) -> None:
@@ -475,15 +476,28 @@ class Helicopter:
         self.engine_fractional_power_tail_rotor = fractional_power_tail_rotor
 
     def setup_rotor(self) -> 'Rotor':
-        if not self.rotor_set:
-            self.rotor = Rotor(self.environment)
-            self.rotor.get_rotor_parameters()
-            self.rotor_set = True
-        return self.rotor
+        if not self.main_rotor_set:
+            self.main_rotor = Rotor(self.environment)
+            print("Setting up main rotor...\n")
+            sleep(1)
+            self.main_rotor.get_rotor_parameters()
+            self.main_rotor_position = float(input("Please enter the position of the main rotor from the nose (m): "))
+            sleep(0.2)
+            print("Setting up tail rotor...\n")
+            sleep(1)
+            self.tail_rotor = Rotor(self.environment)
+            self.tail_rotor.get_rotor_parameters()
+            self.tail_rotor_position = float(input("Please enter the position of the tail rotor from the nose (m): "))
+            sleep(0.2)
+            self.main_rotor_set = True
+            self.tail_rotor_set = True
+        return self.main_rotor, self.tail_rotor
 
-    def set_rotor(self, rotor: 'Rotor') -> None:
-        self.rotor = rotor
-        self.rotor_set = True
+    def set_rotor(self, rotor1: 'Rotor', rotor2: 'Rotor') -> None:
+        self.main_rotor = rotor1
+        self.tail_rotor = rotor2
+        self.main_rotor_set = True
+        self.tail_rotor_set = True
 
     def get_total_mass(self) -> float:
         total_mass: float = 0
@@ -491,12 +505,14 @@ class Helicopter:
             total_mass += self.fuselage_mass
         if self.engine_set:
             total_mass += self.engine_mass
-        if self.rotor_set and self.rotor:
-            total_mass += self.rotor.blade_mass * self.rotor.number_of_blades
+        if self.main_rotor_set and self.main_rotor:
+            total_mass += self.main_rotor.blade_mass * self.main_rotor.number_of_blades
+        if self.tail_rotor_set and self.tail_rotor:
+            total_mass += self.tail_rotor.blade_mass * self.tail_rotor.number_of_blades
         return total_mass
 
     def calculate_hover_performance(self,n_divisions: int = 50) -> Dict[str, float]:
-        if not self.rotor_set:
+        if not self.main_rotor_set:
             raise ValueError("Rotor has not been set up.")
 
         density: float = 1.2
@@ -506,7 +522,7 @@ class Helicopter:
             density = self.environment.get_density(temperature, pressure)
 
         climb_velocity = 0
-        return self.rotor.calculate_performance(climb_velocity, n_divisions, density)
+        return self.main_rotor.calculate_performance(climb_velocity, n_divisions, density)
 
     def calculate_thrust_required_for_hover(self) -> float:
         total_mass: float = self.get_total_mass()
@@ -518,7 +534,7 @@ class Helicopter:
         return total_mass * g
 
     def can_hover(self, climb_velocity: float = 0, n_divisions: int = 50) -> Tuple[bool, str]:
-        if not self.rotor_set:
+        if not self.main_rotor_set:
             return False, "Rotor parameters not set"
 
         performance: Dict[str, float] = self.calculate_hover_performance(climb_velocity, n_divisions)
@@ -528,4 +544,173 @@ class Helicopter:
             return True, f"Can hover. Available thrust: {performance['thrust']:.1f} N, Required: {thrust_required:.1f} N"
         else:
             return False, f"Cannot hover. Available thrust: {performance['thrust']:.1f} N, Required: {thrust_required:.1f} N"
+    
+    def find_tail_rotor_power(self, thrust_needed:float, density: float, initial_guess_omega: float = 0, max_iterations: int = 10, tol: float = 0.05) -> float:
+        omega = initial_guess_omega
+        performance = None
+        for _ in range(max_iterations):
+            performance = self.tail_rotor.calculate_performance(climb_velocity=0, omega=omega, density=density)
+            if abs(performance['thrust'] - thrust_needed) < tol:
+                return performance
+            d_fraction = (thrust_needed - performance['thrust']) / performance['thrust']
+            omega *= (1 + d_fraction*0.5)
+        if abs(thrust_needed - performance['thrust']) > 10*tol:
+            print("Warning: Tail rotor parameter calculation did not converge")
+        return performance['power']
+    
+    def find_power_needed(self, weight: float, vertical_velocity: float, altitude: float, omega: float = None) -> float:
+        if omega is None:
+            omega = self.find_omega_needed(weight, vertical_velocity, altitude, initial_guess=30.0)
+        temperature = self.environment.get_temperature(altitude=altitude)
+        density = self.environment.get_density(temperature=temperature)
+        performance = self.main_rotor.calculate_performance(vertical_velocity, omega, density)
+        tail_power = self.find_tail_rotor_power(performance['torque']/(self.tail_rotor_position - self.main_rotor_position), density, initial_guess_omega=omega*np.sqrt(self.main_rotor.radius_of_rotors/self.tail_rotor.radius_of_rotors))
+        return performance['power'] + tail_power
 
+    def is_helicopter_stalling(self, vertical_velocity: float, altitude: float, omega: float = None) -> bool:
+        pass
+        return False
+
+    
+
+    def find_thrust_provided(self, vertical_velocity: float, altitude: float, omega: float = None) -> float:
+        temperature: float = self.environment.get_temperature(altitude=altitude)
+        pressure: float = self.environment.get_pressure(temperature)
+        density: float = self.environment.get_density(temperature, pressure)
+
+        performance = self.main_rotor.calculate_performance(vertical_velocity, omega, density)
+        return performance['thrust']
+
+    def find_fuselage_vertical_drag(self, vertical_velocity: float, altitude: float, omega: float = None) -> float:
+        pass
+        return 0.0
+
+    def find_omega_needed(self, weight: float, vertical_velocity: float, altitude: float, initial_guess: float, iterations: int= 10, tol: float = 0.05) -> float:
+        gravity = self.environment.gravitational_acceleration
+        weight_force = weight * gravity
+
+        omega = initial_guess
+        for _ in range(iterations):
+            thrust = self.find_thrust_provided(vertical_velocity, altitude, omega)
+            fuselage_drag = self.find_fuselage_vertical_drag(vertical_velocity, altitude, omega)
+            downward_force = weight_force + fuselage_drag
+            if abs(thrust - downward_force) < tol:
+                return omega
+            d_fraction = (downward_force - thrust) / thrust
+            omega *= (1 + d_fraction*0.5)
+        if(abs(thrust - downward_force) > 10*tol):
+            print("Warning: Omega calculation did not converge")
+        return omega
+
+
+
+
+class MissionPlanner:
+    def __init__(self, heli: Helicopter):
+        self.flight_parameters_set: bool = False
+        self.helicopter = heli
+        self.flight_path: list[int] = []
+        self.max_omega = self.helicopter.max_omega
+        
+    def set_flight_parameters(self):
+        self.flight_parameters_set = True
+        self.dry_weight = float(input("Enter the dry weight of the helicopter in kg: "))
+        self.fuel_weight = float(input("Enter the fuel weight of the helicopter in kg: "))
+        self.fuel_specific_energy = 1000*float(input("Enter the fuel specific energy in kJ/kg: "))
+        reserve_fuel_fraction  = float(input("Enter the reserve fuel fraction (e.g., 0.2 for 20%): "))
+        self.min_fuel = self.fuel_weight * reserve_fuel_fraction
+        self.max_fuel = self.fuel_weight
+        
+    # def set_flight_path(self):
+    #     if not self.flight_parameters_set:
+    #         print("Flight parameters not set. Please set them first.")
+    #         return
+    
+    """
+    If True, operation unsuccessfull.
+    In that case first arguement will be the error code
+    -2 -> Flight parameters not set
+    -1 -> Flight path parameters not set
+    0 -> Stall
+    1 -> Max omega exceeded
+    2 -> Max power exceeded
+    
+    """
+    
+    def climb_cost(self, starting_altitude, final_altitude, climb_rate, divisions: int = 500) -> List[float, bool]:
+        if not self.flight_parameters_set:
+            print("Flight parameters not set. Please set them first.")
+            return
+        altitude = starting_altitude
+        delta_t = (final_altitude - starting_altitude)/(climb_rate)
+        stall_check_interval = divisions // 10  
+        dt = delta_t / divisions 
+        fuel_consumed_weight = 0.0
+        stalling = False
+        fuel_specific_energy_inv = 1.0 / self.fuel_specific_energy
+        for i in range(divisions):
+            omega_needed = self.helicopter.find_omega_needed(self.dry_weight + self.fuel_weight-fuel_consumed_weight, climb_rate, altitude=altitude)
+            if(omega_needed>self.max_omega):
+                return [1, True]
+            if i % stall_check_interval == 0:
+                stalling = self.helicopter.is_helicopter_stalling(climb_rate, altitude=altitude, omega=omega_needed)
+                if stalling:
+                    print(f"Helicopter is stalling at altitude {altitude:.2f} m. Climb aborted.")
+                    return [0, True]
+        
+            
+            
+            power_needed = self.helicopter.find_power_needed(self.dry_weight + self.fuel_weight-fuel_consumed_weight, climb_rate, altitude=altitude)
+            d_fuel_consumed = power_needed*dt * fuel_specific_energy_inv
+            fuel_consumed_weight += d_fuel_consumed
+            
+            self.flight_path.append(altitude)
+            altitude += climb_rate * dt
+        return [fuel_consumed_weight, False]
+
+    def hover_cost(self, duration: float, altitude: float, divisions: int = 500) -> List[float, bool]:
+        if not self.flight_parameters_set:
+            print("Flight parameters not set. Please set them first.")
+            return [0, True]
+
+        dt = duration / divisions
+        fuel_consumed = 0.0
+        fuel_specific_energy_inv = 1.0 / self.fuel_specific_energy
+        omega_needed = self.helicopter.find_omega_needed(self.dry_weight + self.fuel_weight, 0, altitude=altitude)
+        
+        if(omega_needed>self.helicopter.max_omega):
+            return [1, True]
+        
+        
+        
+        if(self.helicopter.is_helicopter_stalling(0, altitude=altitude, omega=omega_needed)):
+            return [0, True]
+        for i in range(divisions):
+            omega_needed = self.helicopter.find_omega_needed(self.dry_weight + self.fuel_weight, 0, altitude=altitude)
+            power_needed = self.helicopter.find_power_needed(self.dry_weight + self.fuel_weight - fuel_consumed, 0, altitude=altitude)
+            fuel_consumed += power_needed * dt * fuel_specific_energy_inv
+        return [fuel_consumed, False]
+    
+    def find_available_hover_time(self, altitude, dt = 0.1) -> List[float, bool]:
+        if not self.flight_parameters_set:
+            print("Flight parameters not set. Please set them first.")
+            return [-2, True]
+
+        omega_needed = self.helicopter.find_omega_needed(self.dry_weight + self.fuel_weight, 0, altitude=altitude)
+        if(self.helicopter.is_helicopter_stalling(0, altitude=altitude, omega=omega_needed)):
+            return [0, True]
+        
+        time = 0.0
+        fuel_remaining = self.fuel_weight - self.min_fuel
+        fuel_specific_energy_inv = 1.0 / self.fuel_specific_energy
+            
+    
+        
+        while fuel_remaining > 0:
+            omega_needed = self.helicopter.find_omega_needed(self.dry_weight + fuel_remaining, 0, altitude=altitude)
+            power_needed = self.helicopter.find_power_needed(self.dry_weight + fuel_remaining, 0, altitude=altitude, omega=omega_needed)
+            fuel_remaining -= power_needed * dt * fuel_specific_energy_inv
+            time += dt
+        return [time, False]
+    
+    
