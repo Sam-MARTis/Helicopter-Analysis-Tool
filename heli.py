@@ -3,6 +3,7 @@ from typing import Optional, Tuple, Dict, List, Union
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
+from scipy.optimize import minimize_scalar
 from time import sleep
 
 class Environment:
@@ -88,6 +89,7 @@ class Rotor:
         self.tip_chord: Optional[float] = None
         self.root_pitch: Optional[float] = None
         self.slope_pitch: Optional[float] = None
+        self.default_airfoil:bool = True
 
     def get_rotor_parameters(self) -> None:
         self.parameters_set = True
@@ -101,11 +103,22 @@ class Rotor:
         self.tip_chord = float(input("Please enter the tip chord (m): "))
         self.root_pitch = np.deg2rad(float(input("Please enter the root pitch (degrees): ")))
         self.slope_pitch = float(input("Please enter the slope of the pitch: "))
-
+        custom_file:bool = False
+        if(input("Do you want to provide a custom aero csv file with cl, cd and cm? (y/n): ").lower() == 'y'):
+            custom_file = True
+            self.aero_filepath = input("Please enter the path to the custom aero csv file: ")
+            
+            try:
+                self._build_aero_polynomials(self.aero_filepath)
+                self.default_airfoil = False
+            except Exception as e:
+                print(f"Error building aero polynomials: {e}")
+                print("Switching to default airfoil")
+                self.default_airfoil = True
 
     def set_rotor_parameters(self, number_of_blades: int, blade_mass: float,
                            NACA_for_airfoil: str, radius_of_rotors: float, root_cutout: float, root_chord: float, tip_chord: float,
-                           root_pitch: float, slope_pitch: float) -> None:
+                           root_pitch: float, slope_pitch: float, filepath:str = None) -> None:
         self.parameters_set = True
         self.number_of_blades = number_of_blades
         self.blade_mass = blade_mass
@@ -116,6 +129,61 @@ class Rotor:
         self.tip_chord = tip_chord
         self.root_pitch = np.deg2rad(root_pitch)
         self.slope_pitch = slope_pitch
+        if filepath is not None:
+            self.aero_filepath = filepath
+            try:
+                self._build_aero_polynomials(self.aero_filepath)
+                self.default_airfoil = False
+            except Exception as e:
+                print(f"Error building aero polynomials: {e}")
+                print("Switching to default airfoil")
+                self.default_airfoil = True
+
+    # def set_aero_data_file(self, filename: str) -> None:
+    #     """Set the aero data file and build Cl, Cd functions"""
+    #     self.aero_filepath = filename
+    #     self._build_aero_polynomials()
+
+    def _build_aero_polynomials(self, filepath, degree: int = 4):
+        """Read aero table and fit polynomials for Cl(α) and Cd(α)."""
+        if self.aero_filepath is None:
+            raise ValueError("Aero data file not set. Call set_aero_data_file(filename).")
+
+        try:
+            df = pd.read_csv(filepath, delim_whitespace=True,
+                             names=["alpha", "cl", "cd", "cm"], comment='#')
+        except Exception as e:
+            raise ValueError(f"Could not read aero file '{filepath}': {e}")
+
+        if df.empty:
+            raise ValueError(f"Aero file '{filepath}' is empty or not in expected format.")
+
+        alpha = df["alpha"].to_numpy()
+        cl = df["cl"].to_numpy()
+        cd = df["cd"].to_numpy()
+        cm = df["cm"].to_numpy()
+        
+
+        # Fit polynomials
+        temp_poly = np.poly1d(np.polyfit(alpha, cl, degree))
+        res = minimize_scalar(lambda x: -temp_poly(x),
+                              bounds=(alpha.min(), alpha.max()), method='bounded')
+        self.alpha_stall = res.x
+        # self.cl_stall = temp_poly(self.alpha_stall)
+        
+
+        self.alpha_cutoff = 0.93 * self.alpha_stall
+        mask = alpha <= self.alpha_cutoff
+
+        alpha_pre_stall = alpha[mask]
+        cl_pre_stall = cl[mask]
+        cd_pre_stall = cd[mask]
+
+        self.cl_poly = np.poly1d(np.polyfit(alpha_pre_stall, cl_pre_stall, degree))
+        self.cd_poly = np.poly1d(np.polyfit(alpha, cd_pre_stall, degree))
+
+
+
 
     def get_chord_length(self, x: float) -> float:
         # Function to get chord_length at a given location.
@@ -205,19 +273,29 @@ class Rotor:
         theta: float = self.get_pitch(r_distance)
         return theta - phi
 
-    def get_cL(self, r_distance: float, climb_velocity: float, omega: float, lambda_inflow: float = None, a: float = 5.75) -> float:
+    def get_cL(self, r_distance: float, climb_velocity: float, omega: float, lambda_inflow: float = None, a: float = 5.75) -> Tuple[float, bool]:
         if not self.parameters_set:
             raise ValueError("Rotor parameters have not been set.")
         alpha_eff: float = self.get_alpha_effective_r(r_distance, climb_velocity, omega, lambda_inflow)
-        return a * alpha_eff
+        compressibility_factor = 1.0/np.sqrt(1 - (self.environment.get_mach_number(omega * r_distance, self.environment.get_temperature())**2))
+        if(self.default_airfoil):
+            return a * alpha_eff * compressibility_factor, False
+        else:
+            return self.cl_poly(np.degrees(alpha_eff)) * compressibility_factor, alpha_eff > self.alpha_stall
 
     def get_cD(self, r_distance: float, climb_velocity: float, omega: float, lambda_inflow: float = None, CD0: float = 0.0113,
-             k: float = 0.037807, a: float = 5.75) -> float:
+             k: float = 0.037807, a: float = 5.75) -> Tuple[float, bool]:
 
         if not self.parameters_set:
             raise ValueError("Rotor parameters have not been set.")
         alpha_eff: float = self.get_alpha_effective_r(r_distance, climb_velocity, omega, lambda_inflow)
-        return CD0 + k * ((a * alpha_eff) ** 2)
+        compressibility_factor = 1.0/np.sqrt(1 - (self.environment.get_mach_number(omega * r_distance, self.environment.get_temperature())**2))
+        if(self.default_airfoil):
+            return CD0 + k * ((a * alpha_eff) ** 2) * compressibility_factor, False
+        else:
+            return self.cd_poly(np.degrees(alpha_eff)) * compressibility_factor, alpha_eff > self.alpha_stall 
+
+
 
     def elemental_thrust(self, r_distance: float, dr: float, climb_velocity: float, omega:float,
                         density: float = None) -> float:
@@ -252,8 +330,8 @@ class Rotor:
         lambda_inflow, F = self.elemental_inflow_ratio(r_distance, climb_velocity, omega)
         
         # Get aerodynamic coefficients
-        cl: float = self.get_cL(r_distance, climb_velocity, omega, lambda_inflow)
-        cd: float = self.get_cD(r_distance, climb_velocity, omega, lambda_inflow)
+        cl, _ = self.get_cL(r_distance, climb_velocity, omega, lambda_inflow)
+        cd, _ = self.get_cD(r_distance, climb_velocity, omega, lambda_inflow)
         phi: float = self.get_phi_r(r_distance, climb_velocity, omega, lambda_inflow)
         chord: float = self.get_chord_length(r_distance)
         
@@ -287,8 +365,8 @@ class Rotor:
         lambda_inflow, F = self.elemental_inflow_ratio(r_distance, climb_velocity, omega)
         
         # Get aerodynamic coefficients
-        cl: float = self.get_cL(r_distance, climb_velocity, omega, lambda_inflow)
-        cd: float = self.get_cD(r_distance, climb_velocity, omega, lambda_inflow)
+        cl, _ = self.get_cL(r_distance, climb_velocity, omega, lambda_inflow)
+        cd, _ = self.get_cD(r_distance, climb_velocity, omega, lambda_inflow)
         phi: float = self.get_phi_r(r_distance, climb_velocity, omega, lambda_inflow)
         chord: float = self.get_chord_length(r_distance)
         
@@ -410,8 +488,8 @@ class Rotor:
         for i in range(len(r)):
             chord: float = self.get_chord_length(r[i])
             lambda_inflow, F = self.elemental_inflow_ratio(r[i], climb_velocity, omega)
-            cl: float = self.get_cL(r[i], climb_velocity, omega, lambda_inflow)
-            cd: float = self.get_cD(r[i], climb_velocity, omega, lambda_inflow)
+            cl, _ = self.get_cL(r[i], climb_velocity, omega, lambda_inflow)
+            cd, _ = self.get_cD(r[i], climb_velocity, omega, lambda_inflow)
             phi: float = self.get_phi_r(r[i], climb_velocity, omega, lambda_inflow=lambda_inflow)
 
             velocity_squared: float = (omega * r[i]) ** 2 + (lambda_inflow * omega * self.radius_of_rotors) ** 2
@@ -455,6 +533,16 @@ class Rotor:
         if(abs(thrust - thrust_needed) > 10*tol):
             print("Warning: Omega calculation did not converge")
         return omega
+
+    def is_rotor_stalling(self, vertical_velocity: float, omega: float, divisions: int = 10) -> bool:
+        if(self.default_airfoil):
+            return False
+        dr = self.radius_of_rotors / divisions
+        for i in range(divisions):
+            _, stalling = self.get_cL(r_distance=i * dr, climb_velocity=vertical_velocity, omega=omega)
+            if stalling:
+                return True
+        return False
 
 class Helicopter:
     """Aircraft Helicopter Parameters from the user"""
@@ -617,8 +705,12 @@ class Helicopter:
         return performance['power'] + tail_power
 
     def is_helicopter_stalling(self, vertical_velocity: float, altitude: float, omega: float = None) -> bool:
-        pass
-        return False
+        temperature = self.environment.get_temperature(altitude)
+        density = self.environment.get_density(temperature)
+        performance = self.main_rotor.calculate_performance(vertical_velocity, omega, density)
+        tail_omega = self.tail_rotor.find_omega_needed_uncoupled(thrust_needed=performance['torque']/(self.tail_rotor_position - self.main_rotor_position), vertical_velocity=0, altitude=altitude, initial_guess=omega*np.sqrt(self.main_rotor.radius_of_rotors/self.tail_rotor.radius_of_rotors))
+        is_heli_stalling = self.main_rotor.is_rotor_stalling(vertical_velocity, omega, altitude) or self.tail_rotor.is_rotor_stalling(0, tail_omega, altitude)
+        return is_heli_stalling
 
     
 
