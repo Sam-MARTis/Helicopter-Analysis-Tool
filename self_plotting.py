@@ -60,7 +60,7 @@ def plot_quantities_vs_omega():
 
     colors = plt.cm.viridis(np.linspace(0, 1, len(vertical_velocities)))
     
-    # Calculate data once for all plots
+    
     data = {}
     for idx, v in enumerate(vertical_velocities):
         thrusts = []
@@ -120,9 +120,10 @@ def plot_quantities_vs_omega():
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.savefig('torque_vs_omega.png', dpi=300, bbox_inches='tight')
+    reset_rotor()
     plt.show()
 
-plot_quantities_vs_omega()
+# plot_quantities_vs_omega()
 
 
 def plot_quantities_vs_taper_ratio():
@@ -146,11 +147,12 @@ def plot_quantities_vs_taper_ratio():
             rotor.tip_chord = rotor.root_chord * taper_ratio
             try:
                 omega = rotor.find_omega_needed_uncoupled(vertical_velocity=0, altitude=altitude, thrust_needed=thrust_target, initial_guess=30.0)
-                values = rotor.calculate_performance(vertical_velocity=0, omega=omega, density=density)
+                values = rotor.calculate_performance(climb_velocity=0, omega=omega, density=density)
                 powers.append(values['power'] / 1000)
                 torques.append(values['torque'])
                 omegas_found.append(omega)
-            except:
+            except Exception as e:
+                print("There was an error:", e)
                 powers.append(0)
                 torques.append(0)
                 omegas_found.append(0)
@@ -194,6 +196,89 @@ def plot_quantities_vs_taper_ratio():
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.savefig('torque_vs_taper_ratio.png', dpi=300, bbox_inches='tight')
+    reset_rotor()
     plt.show()
 
-plot_quantities_vs_taper_ratio()
+
+# plot_quantities_vs_taper_ratio()
+
+
+
+
+def plot_quantities_vs_twist():
+    altitude = 2000
+    temperature = env.get_temperature(altitude)
+    pressure = env.get_pressure(temperature, altitude)
+    density = env.get_density(temperature, pressure)
+    
+    twist_values = [0.03*i for i in range(0, 21)]
+    vertical_velocities = [10*i for i in range(10)]
+    omega_fixed = 30.0
+    
+    colors = plt.cm.viridis(np.linspace(0, 1, len(vertical_velocities)))
+    
+    data = {}
+    for idx, v in enumerate(vertical_velocities):
+        thrusts = []
+        powers = []
+        torques = []
+        
+        for twist in twist_values:
+            rotor.root_pitch = np.deg2rad(5.0)
+            rotor.slope_pitch = twist
+            try:
+                values = rotor.calculate_performance(v, omega=omega_fixed, density=density)
+                thrusts.append(values['thrust'])
+                powers.append(values['power'] / 1000)
+                torques.append(values['torque'])
+            except:
+                thrusts.append(0)
+                powers.append(0)
+                torques.append(0)
+        
+        data[v] = {'thrust': thrusts, 'power': powers, 'torque': torques}
+    
+    plt.figure(figsize=(10, 6))
+    for idx, v in enumerate(vertical_velocities):
+        plt.plot(twist_values, data[v]['thrust'], color=colors[idx], linewidth=2, label=f'v = {v} m/s')
+    
+    plt.title('Thrust vs Twist')
+    plt.xlabel('Twist (slope_pitch)')
+    plt.ylabel('Thrust (N)')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig('thrust_vs_twist.png', dpi=300, bbox_inches='tight')
+    plt.show()
+    
+    plt.figure(figsize=(10, 6))
+    for idx, v in enumerate(vertical_velocities):
+        plt.plot(twist_values, data[v]['power'], color=colors[idx], linewidth=2, label=f'v = {v} m/s')
+    
+    plt.title('Power vs Twist')
+    plt.xlabel('Twist (slope_pitch)')
+    plt.ylabel('Power (kW)')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig('power_vs_twist.png', dpi=300, bbox_inches='tight')
+    plt.show()
+    
+    plt.figure(figsize=(10, 6))
+    for idx, v in enumerate(vertical_velocities):
+        plt.plot(twist_values, data[v]['torque'], color=colors[idx], linewidth=2, label=f'v = {v} m/s')
+    
+    plt.title('Torque vs Twist')
+    plt.xlabel('Twist (slope_pitch)')
+    plt.ylabel('Torque (Nm)')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig('torque_vs_twist.png', dpi=300, bbox_inches='tight')
+    plt.show()
+
+plot_quantities_vs_twist()
+
+
+
+# plot_quantities_vs_taper_ratio()

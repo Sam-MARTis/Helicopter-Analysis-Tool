@@ -169,7 +169,7 @@ class Rotor:
             if F <= 1e-8:
                 F = 1e-8
             
-            # Update lambda_inflow using current F
+            
             new_lambda_inflow: float = (
                 np.sqrt(((sigma * a) / (16 * F) - (lambda_c / 2))**2
                         + (sigma * a) / (8 * F) * theta * (r_distance / self.radius_of_rotors))

@@ -17,7 +17,9 @@ def test_find_omega_needed_uncoupled():
         wind_velocity=0,
         ISA_OFFSET=0
     )
-    
+
+    temperature2000 = env.get_temperature(2000)
+    density2000 = env.get_density(temperature2000)
     # Create rotor with your parameters
     rotor = Rotor(environment=env)
     rotor.set_rotor_parameters(
@@ -41,8 +43,8 @@ def test_find_omega_needed_uncoupled():
     print()
     
     # Test different thrust targets
-    thrust_targets = [10000, 20000, 30000, 40000, 50000]  # N
     vertical_velocity = 0  # Hover condition
+    thrust_targets = [rotor.total_thrust(vertical_velocity, omega=i, density=density2000) for i in range(10, 101, 10)]  # N
     altitude = 2000  # m
     
     print("Test Results:")
