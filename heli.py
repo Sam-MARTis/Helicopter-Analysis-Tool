@@ -443,7 +443,8 @@ class Rotor:
     
     def find_omega_needed_uncoupled(self, thrust_needed, vertical_velocity: float, altitude: float, initial_guess: float, iterations: int= 10, tol: float = 0.05) -> float:
         temperature = self.environment.get_temperature(altitude)
-        density = self.environment.get_density(temperature=temperature)
+        pressure = self.environment.get_pressure(temperature, altitude)
+        density = self.environment.get_density(temperature=temperature, pressure=pressure)
         omega = initial_guess
         for _ in range(iterations):
             thrust = self.total_thrust(vertical_velocity, omega, density)
