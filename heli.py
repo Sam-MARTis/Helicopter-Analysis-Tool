@@ -232,11 +232,10 @@ class Rotor:
         theta: float = self.get_pitch(r_distance)
         sigma: float = self.number_of_blades * self.get_chord_length(r_distance) / (np.pi * self.radius_of_rotors)  # since sigma is not constant
         
-        for _ in range(max_iter):
+        for iteration in range(max_iter):
             # Ensure F doesn't become zero to prevent divide by zero
             if F <= 1e-8:
                 F = 1e-8
-            
             
             new_lambda_inflow: float = (
                 np.sqrt(((sigma * a) / (16 * F) - (lambda_c / 2))**2
@@ -244,18 +243,27 @@ class Rotor:
                 - ((sigma * a) / (16 * F) - (lambda_c / 2))
             )
 
+            # Prevent negative or zero lambda_inflow
+            if new_lambda_inflow <= 1e-8:
+                new_lambda_inflow = 1e-8 
             
-            if abs(lambda_inflow) < 1e-8:
-                lambda_inflow = 1e-8 
-            f: float = (self.number_of_blades / 2) * ((1 - r_distance / self.radius_of_rotors) / lambda_inflow)
+            f: float = (self.number_of_blades / 2) * ((1 - r_distance / self.radius_of_rotors) / new_lambda_inflow)
 
-            # f_safe = max(f, 1e-8)
-            new_F: float = (2 / np.pi) * np.arccos(np.exp(-max(f, 1e-8)))
+            # Limit f to prevent numerical issues
+            f = min(max(f, 1e-8), 50)  # Cap f at reasonable value
+            new_F: float = (2 / np.pi) * np.arccos(np.exp(-f))
 
-            if abs(new_lambda_inflow - lambda_inflow) < tol and abs(new_F - F) < tol:
+            # Check convergence
+            lambda_diff = abs(new_lambda_inflow - lambda_inflow)
+            F_diff = abs(new_F - F)
+            
+            if lambda_diff < tol and F_diff < tol:
                 return new_lambda_inflow, new_F
 
-            lambda_inflow, F = new_lambda_inflow, new_F
+            # Use relaxation to improve convergence
+            relaxation = 0.7  # Under-relaxation factor
+            lambda_inflow = relaxation * new_lambda_inflow + (1 - relaxation) * lambda_inflow
+            F = relaxation * new_F + (1 - relaxation) * F
 
         return lambda_inflow, F
 
@@ -273,11 +281,26 @@ class Rotor:
         theta: float = self.get_pitch(r_distance)
         return theta - phi
 
+    def safe_compressibility_factor(self, omega: float, r_distance: float, max_mach: float = 0.9) -> float:
+        """Calculate compressibility factor with bounds to prevent supersonic issues"""
+        temperature = self.environment.get_temperature()
+        mach = self.environment.get_mach_number(omega * r_distance, temperature)
+        
+        # Limit mach number to prevent sqrt of negative number
+        mach = min(abs(mach), max_mach)  # Use abs to handle any negative values
+        
+        # Additional safety check
+        discriminant = 1 - mach**2
+        if discriminant <= 0:
+            discriminant = 0.01  # Small positive value
+            
+        return 1.0 / np.sqrt(discriminant)
+
     def get_cL(self, r_distance: float, climb_velocity: float, omega: float, lambda_inflow: float = None, a: float = 5.75) -> Tuple[float, bool]:
         if not self.parameters_set:
             raise ValueError("Rotor parameters have not been set.")
         alpha_eff: float = self.get_alpha_effective_r(r_distance, climb_velocity, omega, lambda_inflow)
-        compressibility_factor = 1.0/np.sqrt(1 - (self.environment.get_mach_number(omega * r_distance, self.environment.get_temperature())**2))
+        compressibility_factor = self.safe_compressibility_factor(omega, r_distance)
         if(self.default_airfoil):
             return a * alpha_eff * compressibility_factor, False
         else:
@@ -289,7 +312,7 @@ class Rotor:
         if not self.parameters_set:
             raise ValueError("Rotor parameters have not been set.")
         alpha_eff: float = self.get_alpha_effective_r(r_distance, climb_velocity, omega, lambda_inflow)
-        compressibility_factor = 1.0/np.sqrt(1 - (self.environment.get_mach_number(omega * r_distance, self.environment.get_temperature())**2))
+        compressibility_factor = self.safe_compressibility_factor(omega, r_distance)
         if(self.default_airfoil):
             return CD0 + k * ((a * alpha_eff) ** 2) * compressibility_factor, False
         else:
@@ -519,17 +542,54 @@ class Rotor:
 
         return performance
     
-    def find_omega_needed_uncoupled(self, thrust_needed, vertical_velocity: float, altitude: float, initial_guess: float, iterations: int= 10, tol: float = 0.05) -> float:
+    def get_max_safe_omega(self, max_tip_mach: float = 0.9) -> float:
+        """Calculate maximum omega to keep tip speed well below supersonic"""
+        temperature = self.environment.get_temperature()
+        speed_of_sound = self.environment.get_speed_of_sound(temperature)
+        max_tip_speed = max_tip_mach * speed_of_sound
+        max_omega = max_tip_speed / self.radius_of_rotors
+        
+        # Additional conservative limit - never exceed 40 rad/s for large rotors
+        # if self.radius_of_rotors > 3.0:
+        #     max_omega = min(max_omega, 40.0)
+        # else:
+        #     max_omega = min(max_omega, 60.0)
+            
+        return max_omega
+    
+    def find_omega_needed_uncoupled(self, thrust_needed, vertical_velocity: float, altitude: float, initial_guess: float, iterations: int= 40, tol: float = 0.05) -> float:
         temperature = self.environment.get_temperature(altitude)
         pressure = self.environment.get_pressure(temperature, altitude)
         density = self.environment.get_density(temperature=temperature, pressure=pressure)
-        omega = initial_guess
-        for _ in range(iterations):
+        
+        # Limit omega to prevent supersonic issues
+        max_omega = self.get_max_safe_omega()
+        omega = min(initial_guess, max_omega * 0.8)  # Start conservatively
+        
+        for iteration in range(iterations):
+            # Don't exceed max safe omega
+            if omega > max_omega:
+                print(f"Warning: Omega limited to {max_omega:.1f} rad/s (supersonic limit)")
+                return max_omega
+                
             thrust = self.total_thrust(vertical_velocity, omega, density)
-            if abs(thrust - thrust_needed) < tol:
+            error = abs(thrust - thrust_needed)
+            
+            if error < tol:
                 return omega
-            d_fraction = (thrust_needed - thrust) / thrust
-            omega *= (1 + d_fraction*0.5)
+            
+            # Improved convergence algorithm
+            d_fraction = (thrust_needed - thrust) / max(thrust, 1e-6)  # Prevent division by zero
+            
+            # Limit the step size to prevent overshooting
+            step_limit = 0.3  # Maximum 30% change per iteration
+            d_fraction = max(min(d_fraction, step_limit), -step_limit)
+            
+            omega *= (1 + d_fraction)
+            
+            # Ensure omega stays positive and reasonable
+            omega = max(omega, 1.0)  # Minimum 1 rad/s
+            
         if(abs(thrust - thrust_needed) > 10*tol):
             print("Warning: Omega calculation did not converge")
         return omega
@@ -907,10 +967,11 @@ class MissionPlanner:
             max_thrust = self.helicopter.find_thrust_provided(0, altitude=altitude, omega=max_omega)
             stall_max_weight = (max_thrust - self.helicopter.find_fuselage_vertical_drag(vertical_velocity=0, altitude=altitude, omega=max_omega))/ self.helicopter.environment.gravitational_acceleration
 
-        weight = initial_weight_guess if initial_weight_guess is not None else self.dry_weight
+        weight = initial_weight_guess if initial_weight_guess is not None else self.dry_weight + self.fuel_weight
         d_weight = weight * 0.1
         prev_exceeded_power: bool = None
-        
+        print("\n\n\n Testing power constraint")
+
         if(power_constraint):
             
             for _ in range(iterations):
@@ -926,8 +987,7 @@ class MissionPlanner:
                     weight += d_weight
                 if(abs(power_needed - self.helicopter.engine_max_available_power) < tol):
                     break
-            if(weight < power_max_weight):
-                power_max_weight = weight
+            power_max_weight = weight  # This is the result of binary search
         return min(stall_max_weight, power_max_weight), stall_max_weight, power_max_weight
     
     
