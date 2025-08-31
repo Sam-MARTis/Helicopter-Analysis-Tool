@@ -29,10 +29,10 @@ def test_bemt_implementation():
     # Set up rotor
     rotor = Rotor(environment=env)
     rotor.set_rotor_parameters(
-        number_of_blades=2,
+        number_of_blades=4,
         blade_mass=50,
         NACA_for_airfoil="0012",
-        radius_of_rotors=5.0,
+        radius_of_rotors=3,
         root_cutout=0.5,
         angle_of_attack=8.0,  # degrees
         root_chord=0.3,

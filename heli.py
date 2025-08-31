@@ -184,7 +184,7 @@ class Rotor:
             if abs(lambda_inflow) < 1e-8:
                 lambda_inflow = 1e-8  # Set minimum value to prevent division by zero
             f: float = (self.number_of_blades / 2) * ((1 - r_distance / self.radius_of_rotors) / lambda_inflow)
-            new_F: float = (2 / np.pi) * np.arccos(np.exp(-f))
+            new_F: float = (2 / np.pi) * np.arccos(np.exp(-min(f, 0)))
 
             # Check convergence
             if abs(new_lambda_inflow - lambda_inflow) < tol and abs(new_F - F) < tol:
@@ -545,39 +545,39 @@ class Helicopter:
             total_mass += self.tail_rotor.blade_mass * self.tail_rotor.number_of_blades
         return total_mass
 
-    def calculate_hover_performance(self, omega: float, n_divisions: int = 50) -> Dict[str, float]:
-        if not self.main_rotor_set:
-            raise ValueError("Rotor has not been set up.")
+    # def calculate_hover_performance(self, omega: float, n_divisions: int = 50) -> Dict[str, float]:
+    #     if not self.main_rotor_set:
+    #         raise ValueError("Rotor has not been set up.")
 
-        density: float = 1.2
-        if self.environment and self.environment.environment_set:
-            temperature: float = self.environment.get_temperature()
-            pressure: float = self.environment.get_pressure(temperature)
-            density = self.environment.get_density(temperature, pressure)
+    #     density: float = 1.2
+    #     if self.environment and self.environment.environment_set:
+    #         temperature: float = self.environment.get_temperature()
+    #         pressure: float = self.environment.get_pressure(temperature)
+    #         density = self.environment.get_density(temperature, pressure)
 
-        climb_velocity = 0
-        return self.main_rotor.calculate_performance(climb_velocity, omega, density, n_divisions)
+    #     climb_velocity = 0
+    #     return self.main_rotor.calculate_performance(climb_velocity, omega, density, n_divisions)
 
-    def calculate_thrust_required_for_hover(self) -> float:
-        total_mass: float = self.get_total_mass()
-        g: float
-        if self.environment and self.environment.environment_set:
-            g = self.environment.gravitational_acceleration
-        else:
-            g = 9.80665
-        return total_mass * g
+    # def calculate_thrust_required_for_hover(self) -> float:
+    #     total_mass: float = self.get_total_mass()
+    #     g: float
+    #     if self.environment and self.environment.environment_set:
+    #         g = self.environment.gravitational_acceleration
+    #     else:
+    #         g = 9.80665
+    #     return total_mass * g
 
-    def can_hover(self, omega: float, climb_velocity: float = 0, n_divisions: int = 50) -> Tuple[bool, str]:
-        if not self.main_rotor_set:
-            return False, "Rotor parameters not set"
+    # def can_hover(self, omega: float, climb_velocity: float = 0, n_divisions: int = 50) -> Tuple[bool, str]:
+    #     if not self.main_rotor_set:
+    #         return False, "Rotor parameters not set"
 
-        performance: Dict[str, float] = self.calculate_hover_performance(omega, n_divisions)
-        thrust_required: float = self.calculate_thrust_required_for_hover()
+    #     performance: Dict[str, float] = self.calculate_hover_performance(omega, n_divisions)
+    #     thrust_required: float = self.calculate_thrust_required_for_hover()
 
-        if performance['thrust'] >= thrust_required:
-            return True, f"Can hover. Available thrust: {performance['thrust']:.1f} N, Required: {thrust_required:.1f} N"
-        else:
-            return False, f"Cannot hover. Available thrust: {performance['thrust']:.1f} N, Required: {thrust_required:.1f} N"
+    #     if performance['thrust'] >= thrust_required:
+    #         return True, f"Can hover. Available thrust: {performance['thrust']:.1f} N, Required: {thrust_required:.1f} N"
+    #     else:
+    #         return False, f"Cannot hover. Available thrust: {performance['thrust']:.1f} N, Required: {thrust_required:.1f} N"
     
     def find_tail_rotor_power(self, thrust_needed:float, density: float, initial_guess_omega: float = 0, max_iterations: int = 10, tol: float = 0.05) -> float:
         omega = initial_guess_omega
@@ -828,3 +828,5 @@ class MissionPlanner:
         #     break
 
         # return [max_hover_weight, False]
+
+
