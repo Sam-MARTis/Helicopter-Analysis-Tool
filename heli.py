@@ -608,26 +608,16 @@ class Helicopter:
     #     else:
     #         return False, f"Cannot hover. Available thrust: {performance['thrust']:.1f} N, Required: {thrust_required:.1f} N"
     """
-    def find_tail_rotor_power(self, thrust_needed:float, density: float, initial_guess_omega: float = 0, max_iterations: int = 10, tol: float = 0.05) -> float:
-        omega = initial_guess_omega
-        performance = None
-        for _ in range(max_iterations):
-            performance = self.tail_rotor.calculate_performance(climb_velocity=0, omega=omega, density=density)
-            if abs(performance['thrust'] - thrust_needed) < tol:
-                return performance['power']  # Return power, not whole dict
-            d_fraction = (thrust_needed - performance['thrust']) / performance['thrust']
-            omega *= (1 + d_fraction*0.5)
-        if abs(thrust_needed - performance['thrust']) > 10*tol:
-            print("Warning: Tail rotor parameter calculation did not converge")
-        return performance['power']
-    
-    def find_power_needed(self, weight: float, vertical_velocity: float, altitude: float, omega: float = None) -> float:
+
+    def find_power_needed(self, weight: float, vertical_velocity: float, altitude: float, omega: float = None, initial_guess: float = 30.0) -> float:
         if omega is None:
-            omega = self.main_rotor.find_omega_needed_uncoupled(thrust_needed=weight, vertical_velocity=vertical_velocity, altitude=altitude, initial_guess=30.0)
+            omega = self.main_rotor.find_omega_needed_uncoupled(thrust_needed=weight, vertical_velocity=vertical_velocity, altitude=altitude, initial_guess=initial_guess)
         temperature = self.environment.get_temperature(altitude=altitude)
         density = self.environment.get_density(temperature=temperature)
         performance = self.main_rotor.calculate_performance(vertical_velocity, omega, density)
-        tail_power = self.find_tail_rotor_power(performance['torque']/(self.tail_rotor_position - self.main_rotor_position), density, initial_guess_omega=omega*np.sqrt(self.main_rotor.radius_of_rotors/self.tail_rotor.radius_of_rotors))
+
+        tail_omega = self.tail_rotor.find_omega_needed_uncoupled(thrust_needed=performance['torque']/(self.tail_rotor_position - self.main_rotor_position), vertical_velocity=0, altitude=altitude, initial_guess=omega*np.sqrt(self.main_rotor.radius_of_rotors/self.tail_rotor.radius_of_rotors))
+        tail_power = self.tail_rotor.total_power(climb_velocity=0, omega=tail_omega, density=density)
         return performance['power'] + tail_power
 
     def is_helicopter_stalling(self, vertical_velocity: float, altitude: float, omega: float = None) -> bool:
