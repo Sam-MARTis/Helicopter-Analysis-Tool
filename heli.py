@@ -425,6 +425,8 @@ class Helicopter:
         self.engine_set: bool = False
         self.main_rotor_set: bool = False
         self.tail_rotor_set: bool = False
+        #For now max omega is infinity
+        self.max_omega: float = float('inf')
 
         self.fuselage_mass: Optional[float] = None
         self.fuselage_length: Optional[float] = None
@@ -437,7 +439,9 @@ class Helicopter:
         self.engine_mass: Optional[float] = None
         self.engine_BSFC: Optional[float] = None
         self.engine_shaft_power_conversion_efficiency: Optional[float] = None
-        self.engine_fractional_power_tail_rotor: Optional[float] = None
+        self.engine_max_power: Optional[float] = None
+        self.power_loss = 0.1
+        self.engine_max_available_power = None
 
     def get_fuselage_parameters(self) -> None:
         # fuselage parameters
@@ -464,16 +468,17 @@ class Helicopter:
         self.engine_mass = float(input("Please enter the mass of the engine (kg): "))
         self.engine_BSFC = float(input("Please enter the BSFC of the engine (kg/kWh): "))
         self.engine_shaft_power_conversion_efficiency = float(input("Please enter the shaft power conversion efficiency: "))
-        self.engine_fractional_power_tail_rotor = float(input("Please enter the fractional power of the tail rotor: "))
+        self.engine_max_power = float(input("Please enter the maximum power of the engine (kW): "))
+        self.engine_max_available_power = self.engine_max_power * (1 - self.power_loss)
 
     def set_engine_parameters(self, mass: float, BSFC: float,
-                            shaft_power_conversion_efficiency: float,
-                            fractional_power_tail_rotor: float) -> None:
+                            shaft_power_conversion_efficiency: float, max_power: float) -> None:
         self.engine_set = True
         self.engine_mass = mass
         self.engine_BSFC = BSFC
         self.engine_shaft_power_conversion_efficiency = shaft_power_conversion_efficiency
-        self.engine_fractional_power_tail_rotor = fractional_power_tail_rotor
+        self.engine_max_power = max_power
+        self.engine_max_available_power = self.engine_max_power * (1 - self.power_loss)
 
     def setup_rotor(self) -> 'Rotor':
         if not self.main_rotor_set:
@@ -608,7 +613,7 @@ class Helicopter:
 class MissionPlanner:
     def __init__(self, heli: Helicopter):
         self.flight_parameters_set: bool = False
-        self.helicopter = heli
+        self.helicopter: Helicopter = heli
         self.flight_path: list[int] = []
         self.max_omega = self.helicopter.max_omega
         
@@ -677,6 +682,7 @@ class MissionPlanner:
         fuel_consumed = 0.0
         fuel_specific_energy_inv = 1.0 / self.fuel_specific_energy
         omega_needed = self.helicopter.find_omega_needed(self.dry_weight + self.fuel_weight, 0, altitude=altitude)
+
         
         if(omega_needed>self.helicopter.max_omega):
             return [1, True]
@@ -712,5 +718,84 @@ class MissionPlanner:
             fuel_remaining -= power_needed * dt * fuel_specific_energy_inv
             time += dt
         return [time, False]
+
+    def find_max_hover_weight(self, altitude, stall_constraint:bool = True, power_constraint:bool = True, iterations:int = 100, initial_omega_guess:float = 30, initial_weight_guess: float = None, tol: float = 1e-1) -> float:
+        if not self.flight_parameters_set:
+            print("Flight parameters not set. Please set them first.")
+            return [-2, True]
+
+       # "Cannot have both stall and power constraints false simultaneously."
+        assert (stall_constraint or power_constraint) is True, "Cannot have both stall and power constraints false simultaneously."
+        power_max_weight = float('inf')
+        stall_max_weight = float('inf')
+        
+        omega = initial_omega_guess
+        max_omega = 0
+        domega = 5
+        prev_iteration_stalled:bool = False
+
+        if(stall_constraint): # Someone please make sure to check this logic
+            for _ in range(iterations):
+                omega += domega
+                if self.helicopter.is_helicopter_stalling(0, altitude=altitude, omega=omega):
+
+                    if not prev_iteration_stalled:
+                        domega *= -0.5
+                    prev_iteration_stalled = True
+                else:
+                    if(prev_iteration_stalled):
+                        domega *= -0.5
+                    prev_iteration_stalled = False
+            max_omega = omega
+            max_thrust = self.helicopter.find_thrust_provided(0, altitude=altitude, omega=max_omega)
+            stall_max_weight = (max_thrust - self.helicopter.find_fuselage_vertical_drag(vertical_velocity=0, altitude=altitude, omega=max_omega))/ self.helicopter.environment.gravitational_acceleration
+
+        weight = initial_weight_guess if initial_weight_guess is not None else self.dry_weight
+        d_weight = weight * 0.1
+        prev_exceeded_power: bool = None
+        
+        if(power_constraint):
+            
+            for _ in range(iterations):
+                power_needed = self.helicopter.find_power_needed(weight=weight, vertical_velocity=0, altitude=altitude)
+                if power_needed > self.helicopter.engine_max_available_power:
+                    if(prev_exceeded_power is False):
+                        d_weight *= 0.5
+                    weight -= d_weight
+                    prev_exceeded_power = True
+                else:
+                    if(prev_exceeded_power is True):
+                        d_weight *= 0.5
+                    weight += d_weight
+                if(abs(power_needed - self.helicopter.engine_max_available_power) < tol):
+                    break
+            if(weight < power_max_weight):
+                power_max_weight = weight
+        return min(stall_max_weight, power_max_weight), stall_max_weight, power_max_weight
     
     
+    
+    
+        # omega_needed = self.helicopter.find_omega_needed(self.dry_weight + self.fuel_weight, 0, altitude=altitude)
+        # if(self.helicopter.is_helicopter_stalling(0, altitude=altitude, omega=omega_needed)):
+        #     return [0, True]
+
+        # max_hover_weight = self.dry_weight + self.fuel_weight
+        # fuel_specific_energy_inv = 1.0 / self.fuel_specific_energy
+
+        # while True:
+        #     omega_needed = self.helicopter.find_omega_needed(max_hover_weight, 0, altitude=altitude)
+        #     power_needed = self.helicopter.find_power_needed(max_hover_weight, 0, altitude=altitude, omega=omega_needed)
+
+        #     if stall_constraint and self.helicopter.is_helicopter_stalling(0, altitude=altitude, omega=omega_needed):
+        #         print(f"Helicopter is stalling at altitude {altitude:.2f} m. Climb aborted.")
+        #         return [1, True]
+
+        #     if power_constraint and power_needed > self.helicopter.max_power:
+        #         print(f"Power limit exceeded at altitude {altitude:.2f} m. Climb aborted.")
+        #         return [2, True]
+
+        #     # If we reach here, it means we can hover at this weight
+        #     break
+
+        # return [max_hover_weight, False]
