@@ -933,6 +933,7 @@ class MissionPlanner:
     
     
     
+    
         # omega_needed = self.helicopter.find_omega_needed(self.dry_weight + self.fuel_weight, 0, altitude=altitude)
         # if(self.helicopter.is_helicopter_stalling(0, altitude=altitude, omega=omega_needed)):
         #     return [0, True]
