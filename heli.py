@@ -571,13 +571,46 @@ class Rotor:
 
     def is_rotor_stalling(self, vertical_velocity: float, omega: float, divisions: int = 10) -> bool:
         if(self.default_airfoil):
-            return False
+            target = np.rad2deg(20)
+        else:
+            target = self.alpha_stall
+        omega = 200/self.radius_of_rotors
         dr = (self.radius_of_rotors - self.root_cutout) / divisions
+        stalling = False
         for i in range(divisions):
-            _, stalling = self.get_cL(r_distance= self.root_cutout + (i+0.5) * dr, climb_velocity=vertical_velocity, omega=omega)
-            if stalling:
-                return True
-        return False
+            r = self.root_cutout + (i + 0.5) * dr
+            angle = self.get_alpha_effective_r(r, vertical_velocity, omega=omega)
+            if angle > target:
+                stalling = True
+                break
+        return stalling
+
+        
+        # dr = (self.radius_of_rotors - self.root_cutout) / divisions
+        # for i in range(divisions):
+        #     _, stalling = self.get_cL(r_distance= self.root_cutout + (i+0.5) * dr, climb_velocity=vertical_velocity, omega=omega)
+        #     if stalling:
+        #         return True
+        # return False
+
+    def find_max_thrust_before_stall(self, vertical_velocity: float, omega: float, altitude: float, initial_omega_guess: float = 40, iterations: int = 100) -> float:
+        temperature = self.environment.get_temperature(altitude)
+        pressure = self.environment.get_pressure(temperature, altitude)
+        density = self.environment.get_density(temperature=temperature, pressure=pressure)
+        omega = initial_omega_guess
+        domega = omega*0.1
+        prev_stalled = False
+        for _ in range(iterations):
+            if(self.is_rotor_stalling(vertical_velocity, omega, divisions=30)):
+                if(not prev_stalled):
+                    domega *= -0.5
+                prev_stalled = True
+            else:
+                if(prev_stalled):
+                    domega *= -0.5
+                prev_stalled = False
+        thrust = self.total_thrust(vertical_velocity, omega-(3*abs(domega)), density)
+        return thrust, omega-(3*abs(domega))
 
 class Helicopter:
     """Aircraft Helicopter Parameters from the user"""
@@ -710,6 +743,7 @@ class Helicopter:
         performance = self.main_rotor.calculate_performance(vertical_velocity, omega, density)
         tail_omega = self.tail_rotor.find_omega_needed_uncoupled(thrust_needed=performance['torque']/(self.tail_rotor_position - self.main_rotor_position), vertical_velocity=0, altitude=altitude, initial_guess=omega*np.sqrt(self.main_rotor.radius_of_rotors/self.tail_rotor.radius_of_rotors))
         is_heli_stalling = self.main_rotor.is_rotor_stalling(vertical_velocity, omega, altitude) or self.tail_rotor.is_rotor_stalling(0, tail_omega, altitude)
+        
         return is_heli_stalling
 
     
@@ -886,32 +920,16 @@ class MissionPlanner:
         power_max_weight = float('inf')
         stall_max_weight = float('inf')
         
-        omega = initial_omega_guess
-        max_omega = 0
-        domega = 5
-        prev_iteration_stalled:bool = False
-
-        if(stall_constraint): # Someone please make sure to check this logic
-            for _ in range(iterations):
-                omega += domega
-                if self.helicopter.is_helicopter_stalling(0, altitude=altitude, omega=omega):
-
-                    if not prev_iteration_stalled:
-                        domega *= -0.5
-                    prev_iteration_stalled = True
-                else:
-                    if(prev_iteration_stalled):
-                        domega *= -0.5
-                    prev_iteration_stalled = False
-            max_omega = omega
-            max_thrust = self.helicopter.find_thrust_provided(0, altitude=altitude, omega=max_omega)
-            stall_max_weight = (max_thrust - self.helicopter.find_fuselage_vertical_drag(vertical_velocity=0, altitude=altitude, omega=max_omega))/ self.helicopter.environment.gravitational_acceleration
-
-        weight = initial_weight_guess if initial_weight_guess is not None else self.dry_weight + self.fuel_weight
-        d_weight = weight * 0.1
-        prev_exceeded_power: bool = None
-        print("\n\n\n Testing power constraint")
-
+    
+        temperature = self.helicopter.environment.get_temperature(altitude)
+        density = self.helicopter.environment.get_density(temperature)
+        if(stall_constraint):
+            _, max_main_rotor_omega = self.helicopter.main_rotor.find_max_thrust_before_stall(0, omega=initial_omega_guess, altitude=altitude, initial_omega_guess=initial_omega_guess, iterations=iterations)
+            _ , max_tail_rotor_omega = self.helicopter.tail_rotor.find_max_thrust_before_stall(0, omega=initial_omega_guess*np.sqrt(self.helicopter.main_rotor.radius_of_rotors/self.helicopter.tail_rotor.radius_of_rotors), altitude=altitude, initial_omega_guess=initial_omega_guess*np.sqrt(self.helicopter.main_rotor.radius_of_rotors/self.helicopter.tail_rotor.radius_of_rotors), iterations=iterations)
+            max_omega = min(max_main_rotor_omega, max_tail_rotor_omega)
+            
+            max_thrust = self.helicopter.main_rotor.total_thrust(climb_velocity=0, omega=max_omega, density=density)
+            stall_max_weight = (max_thrust - self.helicopter.find_fuselage_vertical_drag(vertical_velocity=0, altitude=altitude, omega=omega))/ self.helicopter.environment.gravitational_acceleration
         if(power_constraint):
             
             for _ in range(iterations):
@@ -929,7 +947,7 @@ class MissionPlanner:
                     break
             power_max_weight = weight  # This is the result of binary search
         return min(stall_max_weight, power_max_weight), stall_max_weight, power_max_weight
-    
+
     
     # def stall_maxWeight(self, climb_Velocity, altitude, omega):
     #     stall = 0
