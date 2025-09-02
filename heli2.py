@@ -600,6 +600,7 @@ class Rotor:
         return omega
 
     def is_rotor_stalling(self, vertical_velocity: float, omega: float, divisions: int = 10) -> bool:
+        
         if(self.default_airfoil):
             return False
         dr = (self.radius_of_rotors - self.root_cutout) / divisions

@@ -14,9 +14,9 @@ class Environment:
         self.altitude: Optional[float] = None
         self.pressure_sea_level: Optional[float] = None
         self.Lapse_rate_troposphere: Optional[float] = None
-        self.Specific_gas_constant: float = 287.053   # constant
-        self.gravitational_acceleration: float = 9.80665  # constant
-        self.specific_heat_constant: float = 1.4      # constant
+        self.Specific_gas_constant: float = 287.053   
+        self.gravitational_acceleration: float = 9.80665  
+        self.specific_heat_constant: float = 1.4      
         self.wind_velocity: Optional[float] = None
         self.ISA_OFFSET: Optional[float] = None
 
@@ -58,7 +58,7 @@ class Environment:
                                         (self.gravitational_acceleration / (self.Lapse_rate_troposphere * self.Specific_gas_constant)))
 
     def get_speed_of_sound(self, temperature: float) -> float:
-        # function to calculate the speed of sound
+        
         if not self.environment_set:
             raise ValueError("Environment parameters have not been set.")
         return np.sqrt(1.4 * self.Specific_gas_constant * temperature)
@@ -90,11 +90,12 @@ class Rotor:
         self.root_pitch: Optional[float] = None
         self.slope_pitch: Optional[float] = None
         self.default_airfoil:bool = True
+        self.a_poly = lambda x: 5.75
 
     def get_rotor_parameters(self) -> None:
         self.parameters_set = True
         self.number_of_blades = int(input("Please enter the number of rotors: "))
-        # self.omega = float(input("Please enter the angular velocity of the rotor (rad/s): "))  # rotor_omega=2*np.pi*rotor_rpm/60
+        
         self.blade_mass = float(input("Please enter the mass of the rotors (kg): "))
         self.NACA_for_airfoil = input("Please enter the NACA number of the airfoil: ")
         self.radius_of_rotors = float(input("Please enter the radius of the rotors (m): "))
@@ -139,10 +140,10 @@ class Rotor:
                 print("Switching to default airfoil")
                 self.default_airfoil = True
 
-    # def set_aero_data_file(self, filename: str) -> None:
-    #     """Set the aero data file and build Cl, Cd functions"""
-    #     self.aero_filepath = filename
-    #     self._build_aero_polynomials()
+    
+    
+    
+    
 
     def _build_aero_polynomials(self, filepath, degree: int = 4):
         """Read aero table and fit polynomials for Cl(α) and Cd(α)."""
@@ -150,55 +151,70 @@ class Rotor:
             raise ValueError("Aero data file not set. Call set_aero_data_file(filename).")
 
         try:
-            df = pd.read_csv(filepath, delim_whitespace=True,
-                             names=["alpha", "cl", "cd", "cm"], comment='#')
+
+            df = pd.read_csv(filepath, comment='#')
+            print(f"Successfully read airfoil data from {filepath}")
         except Exception as e:
             raise ValueError(f"Could not read aero file '{filepath}': {e}")
 
         if df.empty:
             raise ValueError(f"Aero file '{filepath}' is empty or not in expected format.")
 
+        
         alpha = df["alpha"].to_numpy()
         cl = df["cl"].to_numpy()
         cd = df["cd"].to_numpy()
         cm = df["cm"].to_numpy()
         
 
-        # Fit polynomials
+        
+        
         temp_poly = np.poly1d(np.polyfit(alpha, cl, degree))
+        
         res = minimize_scalar(lambda x: -temp_poly(x),
                               bounds=(alpha.min(), alpha.max()), method='bounded')
-        self.alpha_stall = res.x
-        # self.cl_stall = temp_poly(self.alpha_stall)
+        self.alpha_stall = res.x  
+        self.cl_stall = temp_poly(self.alpha_stall)
         
+        print(f"Calculated stall angle: {self.alpha_stall:.2f} degrees, Cl_max: {self.cl_stall:.4f}")
 
+        
         self.alpha_cutoff = 0.93 * self.alpha_stall
         mask = alpha <= self.alpha_cutoff
 
+        
         alpha_pre_stall = alpha[mask]
         cl_pre_stall = cl[mask]
         cd_pre_stall = cd[mask]
 
+        
+        if len(alpha_pre_stall) < degree + 1:
+            print(f"Warning: Not enough pre-stall points ({len(alpha_pre_stall)}) for degree {degree}. Reducing degree.")
+            degree = max(1, len(alpha_pre_stall) - 1)
+
         self.cl_poly = np.poly1d(np.polyfit(alpha_pre_stall, cl_pre_stall, degree))
-        self.cd_poly = np.poly1d(np.polyfit(alpha, cd_pre_stall, degree))
+        self.a_poly = np.diff(self.cl_poly)
+        
+        self.cd_poly = np.poly1d(np.polyfit(alpha, cd, degree))
+        print(f"Airfoil polynomials created successfully with {len(alpha_pre_stall)} pre-stall points")
 
 
 
 
     def get_chord_length(self, x: float) -> float:
-        # Function to get chord_length at a given location.
+        
         if not self.parameters_set:
             raise ValueError("Rotor parameters have not been set.")
         return self.root_chord - ((self.root_chord - self.tip_chord) / (self.radius_of_rotors - self.root_cutout)) * x
 
     def get_pitch(self, x: float) -> float:
-        # Basically involving twists
+        
         if not self.parameters_set:
             raise ValueError("Rotor parameters have not been set.")
         return self.root_pitch + self.slope_pitch * x
 
     def get_Cl_Cd_Cm(self, naca_number: str, alpha: float) -> Tuple[float, float, float]:
-        # Extract coefficients
+        
         cl: float = 5.75
         cd: float = 0.0113
         cm: float = 0.03
@@ -224,16 +240,16 @@ class Rotor:
             raise ValueError("Rotor parameters have not been set.")
 
         lambda_c: float = climb_velocity / (omega * self.radius_of_rotors)
-        a: float = 5.75  # Define some useful parameters
-        F: float = 1.1  # Initial guess values to start with
+        # a: float = 5.75  
+        F: float = 1.1  
         lambda_inflow: float = 0.2
 
         
         theta: float = self.get_pitch(r_distance)
-        sigma: float = self.number_of_blades * self.get_chord_length(r_distance) / (np.pi * self.radius_of_rotors)  # since sigma is not constant
-        
+        sigma: float = self.number_of_blades * self.get_chord_length(r_distance) / (np.pi * self.radius_of_rotors)  
+        a = self.a_poly(theta)
         for iteration in range(max_iter):
-            # Ensure F doesn't become zero to prevent divide by zero
+            
             if F <= 1e-8:
                 F = 1e-8
             
@@ -243,27 +259,27 @@ class Rotor:
                 - ((sigma * a) / (16 * F) - (lambda_c / 2))
             )
 
-            # Prevent negative or zero lambda_inflow
+            
             if new_lambda_inflow <= 1e-8:
                 new_lambda_inflow = 1e-8 
             
             f: float = (self.number_of_blades / 2) * ((1 - r_distance / self.radius_of_rotors) / new_lambda_inflow)
 
-            # Limit f to prevent numerical issues
-            f = min(max(f, 1e-8), 50)  # Cap f at reasonable value
+            f = min(max(f, 1e-8), 50)
             new_F: float = (2 / np.pi) * np.arccos(np.exp(-f))
 
-            # Check convergence
+            
             lambda_diff = abs(new_lambda_inflow - lambda_inflow)
             F_diff = abs(new_F - F)
             
             if lambda_diff < tol and F_diff < tol:
                 return new_lambda_inflow, new_F
 
-            # Use relaxation to improve convergence
-            relaxation = 0.7  # Under-relaxation factor
+            
+            relaxation = 0.7
             lambda_inflow = relaxation * new_lambda_inflow + (1 - relaxation) * lambda_inflow
             F = relaxation * new_F + (1 - relaxation) * F
+            a = self.a_poly(self.get_alpha_effective_r(r_distance=r_distance, climb_velocity=climb_velocity, omega=omega, lambda_inflow=lambda_inflow))
 
         return lambda_inflow, F
 
@@ -285,16 +301,9 @@ class Rotor:
         """Calculate compressibility factor with bounds to prevent supersonic issues"""
         temperature = self.environment.get_temperature()
         mach = self.environment.get_mach_number(omega * r_distance, temperature)
-        
-        # Limit mach number to prevent sqrt of negative number
-        mach = min(abs(mach), max_mach)  # Use abs to handle any negative values
-        
-        # Additional safety check
-        discriminant = 1 - mach**2
-        if discriminant <= 0:
-            discriminant = 0.01  # Small positive value
-            
-        return 1.0 / np.sqrt(discriminant)
+        mach = min(abs(mach), max_mach)
+
+        return 1.0 / np.sqrt(1 - mach**2)
 
     def get_cL(self, r_distance: float, climb_velocity: float, omega: float, lambda_inflow: float = None, a: float = 5.75) -> Tuple[float, bool]:
         if not self.parameters_set:
@@ -304,7 +313,9 @@ class Rotor:
         if(self.default_airfoil):
             return a * alpha_eff * compressibility_factor, False
         else:
-            return self.cl_poly(np.degrees(alpha_eff)) * compressibility_factor, alpha_eff > self.alpha_stall
+            
+            cl_value = self.cl_poly(np.degrees(alpha_eff)) * compressibility_factor
+            return cl_value, alpha_eff > self.alpha_stall
 
     def get_cD(self, r_distance: float, climb_velocity: float, omega: float, lambda_inflow: float = None, CD0: float = 0.0113,
              k: float = 0.037807, a: float = 5.75) -> Tuple[float, bool]:
@@ -346,13 +357,13 @@ class Rotor:
         float
             Elemental thrust at that distance. .
         """
-        # we now compute the elemental thrust using blade element theory
+        
         if not self.parameters_set:
             raise ValueError("Rotor parameters have not been set.")
         lambda_inflow: float
         lambda_inflow, F = self.elemental_inflow_ratio(r_distance, climb_velocity, omega)
         
-        # Get aerodynamic coefficients
+        
         cl, _ = self.get_cL(r_distance, climb_velocity, omega, lambda_inflow)
         cd, _ = self.get_cD(r_distance, climb_velocity, omega, lambda_inflow)
         phi: float = self.get_phi_r(r_distance, climb_velocity, omega, lambda_inflow)
@@ -361,7 +372,7 @@ class Rotor:
         
         velocity_squared: float = (omega * r_distance) ** 2 + (lambda_inflow * omega * self.radius_of_rotors) ** 2
 
-        # Apply tip loss using F
+        
         dL: float = 0.5 * density * chord * cl * velocity_squared * F 
         dD: float = 0.5 * density * chord * cd * velocity_squared * F 
         dT: float = (dL * np.cos(phi) - dD * np.sin(phi)) * dr
@@ -384,19 +395,19 @@ class Rotor:
         if not self.parameters_set:
             raise ValueError("Rotor parameters have not been set.")
         
-        # Calculate torque using blade element theory (not thrust * radius)
+        
         lambda_inflow, F = self.elemental_inflow_ratio(r_distance, climb_velocity, omega)
         
-        # Get aerodynamic coefficients
+        
         cl, _ = self.get_cL(r_distance, climb_velocity, omega, lambda_inflow)
         cd, _ = self.get_cD(r_distance, climb_velocity, omega, lambda_inflow)
         phi: float = self.get_phi_r(r_distance, climb_velocity, omega, lambda_inflow)
         chord: float = self.get_chord_length(r_distance)
         
-        # Calculate velocity magnitude squared
+        
         velocity_squared: float = (omega * r_distance) ** 2 + (lambda_inflow * omega * self.radius_of_rotors) ** 2
         
-        # Blade element torque calculation
+        
         dL: float = 0.5 * density * chord * cl * velocity_squared * F
         dD: float = 0.5 * density * chord * cd * velocity_squared * F
         dQ: float = (dD * np.cos(phi) + dL * np.sin(phi)) * r_distance * dr
@@ -428,7 +439,7 @@ class Rotor:
         return net_thrust
 
     def total_torque(self, climb_velocity: float, omega: float,
-                    density: float, n_divisions: int = 50,  cm: float = 0.1) -> float:  # per blade
+                    density: float, n_divisions: int = 50,  cm: float = 0.1) -> float:  
         """
           calculates the net torque required to generate the thrust
 
@@ -471,7 +482,7 @@ class Rotor:
         if not self.parameters_set:
             raise ValueError("Rotor parameters have not been set.")
         
-        # Power = Omega * Torque (P = Ω × Q)
+        
         total_torque_value: float = self.total_torque(climb_velocity, omega, density, n_divisions)
         net_power: float = omega * total_torque_value
         return net_power
@@ -517,8 +528,8 @@ class Rotor:
 
             velocity_squared: float = (omega * r[i]) ** 2 + (lambda_inflow * omega * self.radius_of_rotors) ** 2
 
-            dL: float = 0.5 * density * chord * cl * velocity_squared * F  # Apply tip loss factor
-            dD: float = 0.5 * density * chord * cd * velocity_squared * F  # Apply tip loss factor
+            dL: float = 0.5 * density * chord * cl * velocity_squared * F  
+            dD: float = 0.5 * density * chord * cd * velocity_squared * F  
             dT: float = (dL * np.cos(phi) - dD * np.sin(phi)) * delta_r
             dFx: float = (dD * np.cos(phi) + dL * np.sin(phi)) * delta_r
             dP: float = omega * r[i] * dFx
@@ -571,36 +582,130 @@ class Rotor:
 
     def is_rotor_stalling(self, vertical_velocity: float, omega: float, divisions: int = 10) -> bool:
         if(self.default_airfoil):
-            target = np.rad2deg(20)
+            
+            target_rad = np.deg2rad(20)
         else:
-            target = self.alpha_stall
-        omega = 200/self.radius_of_rotors
+            
+            target_rad = np.deg2rad(self.alpha_stall)
+        
         dr = (self.radius_of_rotors - self.root_cutout) / divisions
         stalling = False
         for i in range(divisions):
             r = self.root_cutout + (i + 0.5) * dr
-            angle = self.get_alpha_effective_r(r, vertical_velocity, omega=omega)
-            if angle > target:
+            angle_rad = self.get_alpha_effective_r(r, vertical_velocity, omega=omega)
+            
+            if angle_rad > target_rad:
+                print(f"Stall detected at r={r:.2f}m: angle={np.degrees(angle_rad):.2f}°, limit={np.degrees(target_rad):.2f}°")
                 stalling = True
                 break
+            
         return stalling
+    def get_cL_custom(self, r_distance: float, climb_velocity: float, omega: float, a: float = 5.75, pitch_factor = 1) -> Tuple[float, bool, float]:
+
+        if not self.parameters_set:
+            raise ValueError("Rotor parameters have not been set.")
+        if self.cl_poly is None:
+            raise ValueError("Cl function not built. Call set_aero_data_file().")
+        compressibility_factor = self.safe_compressibility_factor(omega, r_distance)
+        alpha_eff: float = self.get_alpha_effective_r(r_distance, climb_velocity=climb_velocity, omega=omega)*pitch_factor
+        return self.cl_poly(alpha_eff)*compressibility_factor, alpha_eff > self.alpha_stall, self.cl_poly(self.alpha_stall)
+
+    
+    
+
+    
+    
+    
+    
+
+    
+    
+    
+    def get_cD_custom(self, r_distance: float, climb_velocity: float, omega: float, pitch_factor = 1) -> Tuple[float, bool]:
+        if not self.parameters_set:
+            raise ValueError("Rotor parameters have not been set.")
+        if self.cd_poly is None:
+            raise ValueError("Cd function not built. Call set_aero_data_file().")
+        compressibility_factor = self.safe_compressibility_factor(omega, r_distance)
+
+        alpha_eff: float = self.get_alpha_effective_r(r_distance, climb_velocity=climb_velocity, omega=omega)*pitch_factor
+        return self.cd_poly(alpha_eff)*compressibility_factor
 
         
-        # dr = (self.radius_of_rotors - self.root_cutout) / divisions
-        # for i in range(divisions):
-        #     _, stalling = self.get_cL(r_distance= self.root_cutout + (i+0.5) * dr, climb_velocity=vertical_velocity, omega=omega)
-        #     if stalling:
-        #         return True
-        # return False
+        
+        
+        
+        
+        
+        
+        
+
+    def stall_maxWeight(self, climb_velocity, altitude):
+        stall = 0
+        temperature = self.environment.get_temperature(altitude)
+        pressure = self.environment.get_density(temperature, altitude)
+        density = self.environment.get_density(temperature, pressure)
+
+        omega = 24 
+        gross_weight = 0
+        pitch_factor = 1
+        d_pf = 0.1
+        for _ in range(100):
+          r: np.ndarray = np.linspace(self.root_cutout, self.radius_of_rotors, 10)
+          delta_r: float = r[1] - r[0]
+
+          dT_list: List[float] = []
+
+          for i in range(len(r)):
+              chord: float = self.get_chord_length(r[i])
+              cl, stall, __ = self.get_cL_custom(r[i], climb_velocity=climb_velocity, omega=omega, pitch_factor=pitch_factor)
+              cd: float = self.get_cD_custom(r[i], climb_velocity=climb_velocity, omega=omega, pitch_factor=pitch_factor)
+
+              lambda_inflow: float
+              lambda_inflow, _ = self.elemental_inflow_ratio(r[i], climb_velocity, omega)
+              phi: float = self.get_phi_r(r[i], climb_velocity)
+              
+              if stall:
+                  break
+              
+              else:
+                velocity_squared: float = (omega * r[i]) * 2 + (lambda_inflow * omega * self.radius_of_rotors) * 2
+
+                dL: float = 0.5 * density * chord * cl * velocity_squared
+                dD: float = 0.5 * density * chord * cd * velocity_squared
+                dT: float = (dL * np.cos(phi) - dD * np.sin(phi)) * delta_r
+
+                dT_list.append(dT)
+
+
+          if not stall:
+
+            pitch_factor += d_pf
+
+          if stall:
+            gross_weight = np.sum(dT_list) * self.number_of_blades/self.environment.gravitational_acceleration
+            break
+        
+
+        return gross_weight
+
+        
+        
+        
+        
+        
+        
+        
 
     def find_max_thrust_before_stall(self, vertical_velocity: float, omega: float, altitude: float, initial_omega_guess: float = 40, iterations: int = 100) -> float:
         temperature = self.environment.get_temperature(altitude)
         pressure = self.environment.get_pressure(temperature, altitude)
         density = self.environment.get_density(temperature=temperature, pressure=pressure)
-        omega = initial_omega_guess
-        domega = omega*0.1
+        omega = initial_omega_guess*0.9
+        domega = initial_omega_guess*0.1
         prev_stalled = False
         for _ in range(iterations):
+            omega += domega
             if(self.is_rotor_stalling(vertical_velocity, omega, divisions=30)):
                 if(not prev_stalled):
                     domega *= -0.5
@@ -609,8 +714,8 @@ class Rotor:
                 if(prev_stalled):
                     domega *= -0.5
                 prev_stalled = False
-        thrust = self.total_thrust(vertical_velocity, omega-(3*abs(domega)), density)
-        return thrust, omega-(3*abs(domega))
+        thrust = self.total_thrust(vertical_velocity, omega-(1*abs(domega)), density)
+        return thrust, omega-(1*abs(domega))
 
 class Helicopter:
     """Aircraft Helicopter Parameters from the user"""
@@ -623,7 +728,7 @@ class Helicopter:
         self.engine_set: bool = False
         self.main_rotor_set: bool = False
         self.tail_rotor_set: bool = False
-        #For now max omega is infinity. Will make it better later
+        
         self.max_omega: float = float('inf')
 
         self.fuselage_mass: Optional[float] = None
@@ -644,7 +749,7 @@ class Helicopter:
         self.engine_max_available_power = None
 
     def get_fuselage_parameters(self) -> None:
-        # fuselage parameters
+        
         self.fuselage_mass = float(input("Please enter the fuselage mass (kg): "))
         self.fuselage_length = float(input("Please enter the fuselage length (m): "))
         self.fuselage_width = float(input("Please enter the fuselage width (m): "))
@@ -673,7 +778,7 @@ class Helicopter:
         
 
     def get_engine_parameters(self) -> None:
-        # Aircraft engine parameters
+        
         self.engine_set = True
         self.engine_mass = float(input("Please enter the mass of the engine (kg): "))
         self.engine_max_power = float(input("Please enter the maximum power of the engine (kW): "))
@@ -742,7 +847,7 @@ class Helicopter:
         density = self.environment.get_density(temperature)
         performance = self.main_rotor.calculate_performance(vertical_velocity, omega, density)
         tail_omega = self.tail_rotor.find_omega_needed_uncoupled(thrust_needed=performance['torque']/(self.tail_rotor_position - self.main_rotor_position), vertical_velocity=0, altitude=altitude, initial_guess=omega*np.sqrt(self.main_rotor.radius_of_rotors/self.tail_rotor.radius_of_rotors))
-        is_heli_stalling = self.main_rotor.is_rotor_stalling(vertical_velocity, omega, altitude) or self.tail_rotor.is_rotor_stalling(0, tail_omega, altitude)
+        is_heli_stalling = self.main_rotor.is_rotor_stalling(vertical_velocity, omega) or self.tail_rotor.is_rotor_stalling(0, tail_omega)
         
         return is_heli_stalling
 
@@ -753,7 +858,7 @@ class Helicopter:
         pressure: float = self.environment.get_pressure(temperature)
         density: float = self.environment.get_density(temperature, pressure)
 
-        # performance = self.main_rotor.calculate_performance(vertical_velocity, omega, density)
+        
         thrust = self.main_rotor.total_thrust(vertical_velocity, omega, density)
         return thrust
 
@@ -798,7 +903,7 @@ class MissionPlanner:
         self.reserved_fuel = self.fuel_weight * reserve_fuel_fraction
         self.fuel_weight -= self.reserved_fuel
         self.dry_weight += self.reserved_fuel
-        # self.min_fuel = self.fuel_weight * reserve_fuel_fraction
+        
         self.max_fuel = self.fuel_weight + self.reserved_fuel
 
     def set_flight_parameters_programmatic(self, dry_weight: float, fuel_weight: float, 
@@ -807,18 +912,18 @@ class MissionPlanner:
         self.flight_parameters_set = True
         self.dry_weight = dry_weight
         self.fuel_weight = fuel_weight
-        self.fuel_specific_energy = 1000 * fuel_specific_energy_kj_kg  # Convert kJ/kg to J/kg
+        self.fuel_specific_energy = 1000 * fuel_specific_energy_kj_kg  
         self.reserved_fuel = self.fuel_weight * reserve_fuel_fraction
         self.fuel_weight -= self.reserved_fuel
         self.dry_weight += self.reserved_fuel
-        # self.min_fuel = self.fuel_weight * reserve_fuel_fraction
+        
         self.max_fuel = self.fuel_weight + self.reserved_fuel
         
         
-    # def set_flight_path(self):
-    #     if not self.flight_parameters_set:
-    #         print("Flight parameters not set. Please set them first.")
-    #         return
+    
+    
+    
+    
     
     """
     
@@ -910,12 +1015,12 @@ class MissionPlanner:
             time += dt
         return time, False
 
-    def find_max_hover_weight(self, altitude, stall_constraint:bool = False, power_constraint:bool = True, iterations:int = 100, initial_omega_guess:float = 30, initial_weight_guess: float = None, tol: float = 1e-1) -> float:
+    def find_max_hover_weight(self, altitude, stall_constraint:bool = False, power_constraint:bool = True, iterations:int = 200, initial_omega_guess:float = 30, initial_weight_guess: float = None, tol: float = 1e-1) -> float:
         if not self.flight_parameters_set:
             print("Flight parameters not set. Please set them first.")
             return [-2, True]
 
-       # "Cannot have both stall and power constraints false simultaneously."
+       
         assert (stall_constraint or power_constraint) is True, "Cannot have both stall and power constraints false simultaneously."
         power_max_weight = float('inf')
         stall_max_weight = float('inf')
@@ -929,7 +1034,13 @@ class MissionPlanner:
             max_omega = min(max_main_rotor_omega, max_tail_rotor_omega)
             
             max_thrust = self.helicopter.main_rotor.total_thrust(climb_velocity=0, omega=max_omega, density=density)
-            stall_max_weight = (max_thrust - self.helicopter.find_fuselage_vertical_drag(vertical_velocity=0, altitude=altitude, omega=omega))/ self.helicopter.environment.gravitational_acceleration
+            stall_max_weight = (max_thrust - self.helicopter.find_fuselage_vertical_drag(vertical_velocity=0, altitude=altitude, omega=max_omega))/ self.helicopter.environment.gravitational_acceleration
+        weight = self.dry_weight*0.1
+        d_weight = weight*0.5
+        power_needed = self.helicopter.find_power_needed(weight=weight, vertical_velocity=0, altitude=altitude)
+        prev_exceeded_power = False
+        
+
         if(power_constraint):
             
             for _ in range(iterations):
@@ -945,86 +1056,5 @@ class MissionPlanner:
                     weight += d_weight
                 if(abs(power_needed - self.helicopter.engine_max_available_power) < tol):
                     break
-            power_max_weight = weight  # This is the result of binary search
-        return min(stall_max_weight, power_max_weight), stall_max_weight, power_max_weight
-
-    
-    # def stall_maxWeight(self, climb_Velocity, altitude, omega):
-    #     stall = 0
-    #     temperature = self.environment.get_temperature(self, altitude)
-    #     pressure = self.environment.get_density(temperature, altitude)
-    #     density = self.environment.get_density(temperature, pressure)
-
-    #     pitch_factor = 1
-    #     while not stall:
-    #       r: np.ndarray = np.linspace(self.root_cutout, self.radius_of_rotors, n_divisions)
-    #       delta_r: float = r[1] - r[0]
-
-    #       dL_list: List[float] = []
-    #       dD_list: List[float] = []
-    #       dT_list: List[float] = []
-
-    #       for i in range(len(r)):
-    #           chord: float = self.get_chord_length(r[i])
-    #           cl, stall, cL_stall = self.get_cL(r[i], climb_velocity,pitch_factor)
-    #           cd: float = self.get_cD(r[i], climb_velocity, pitch_factor)
-              
-    #           lambda_inflow: float
-    #           lambda_inflow, _ = self.elemental_inflow_ratio(r[i], climb_velocity, omega)
-    #           phi: float = self.get_phi_r(r[i], climb_velocity)
-              
-    #           if stall:
-    #               break
-              
-    #           else:
-    #             velocity_squared: float = (self.omega * r[i]) * 2 + (lambda_inflow * self.omega * self.radius_of_rotors) * 2
-
-    #             dL: float = 0.5 * density * chord * cl * velocity_squared
-    #             dD: float = 0.5 * density * chord * cd * velocity_squared
-    #             dT: float = (dL * np.cos(phi) - dD * np.sin(phi)) * delta_r
-
-    #             dT_list.append(dT)
-
-
-    #       if not stall:
-    #         Thrust = np.sum(dT_list) * self.number_of_blades
-    #         safe_Thrust = Thrust
-    #         pitch_factor = pitch_factor*1.05
-
-    #       if stall:
-    #         gross_weight = safe_Thrust
-    #         break
-
-    #     return gross_weight
-    
-    # def find_stall_omega(self, climb_velocity, altitude, initial_):
-        
-    
-    
-    
-    
-        # omega_needed = self.helicopter.find_omega_needed(self.dry_weight + self.fuel_weight, 0, altitude=altitude)
-        # if(self.helicopter.is_helicopter_stalling(0, altitude=altitude, omega=omega_needed)):
-        #     return [0, True]
-
-        # max_hover_weight = self.dry_weight + self.fuel_weight
-        # fuel_specific_energy_inv = 1.0 / self.fuel_specific_energy
-
-        # while True:
-        #     omega_needed = self.helicopter.find_omega_needed(max_hover_weight, 0, altitude=altitude)
-        #     power_needed = self.helicopter.find_power_needed(max_hover_weight, 0, altitude=altitude, omega=omega_needed)
-
-        #     if stall_constraint and self.helicopter.is_helicopter_stalling(0, altitude=altitude, omega=omega_needed):
-        #         print(f"Helicopter is stalling at altitude {altitude:.2f} m. Climb aborted.")
-        #         return [1, True]
-
-        #     if power_constraint and power_needed > self.helicopter.max_power:
-        #         print(f"Power limit exceeded at altitude {altitude:.2f} m. Climb aborted.")
-        #         return [2, True]
-
-        #     # If we reach here, it means we can hover at this weight
-        #     break
-
-        # return [max_hover_weight, False]
-
-
+            power_max_weight = weight  
+        return float(min(stall_max_weight, power_max_weight)), float(stall_max_weight), float(power_max_weight)

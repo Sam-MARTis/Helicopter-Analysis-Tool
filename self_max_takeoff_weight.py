@@ -1,7 +1,7 @@
 from heli import Helicopter, Rotor, MissionPlanner, Environment
 import numpy as np
 
-
+import matplotlib.pyplot as plt
 
 
 
@@ -29,21 +29,23 @@ def reset_rotor():
         NACA_for_airfoil="0012",
         radius_of_rotors=6.6,
         root_cutout=0.3,
-        root_chord=0.9,
-        tip_chord=0.5,
-        root_pitch=np.deg2rad(10.0),
-        slope_pitch=np.deg2rad(3),
+        root_chord=1.0,
+        tip_chord=0.9,
+        root_pitch=np.deg2rad(15.0),
+        slope_pitch=np.deg2rad(2),
+        filepath="naca2412.csv"
     )
     rotor2.set_rotor_parameters(
         number_of_blades=4,
         blade_mass=0,
         NACA_for_airfoil="0015",
-        radius_of_rotors=7.0,
+        radius_of_rotors=1.0,
         root_cutout=0.4,
         root_chord=1.0,
         tip_chord=0.6,
-        root_pitch=np.deg2rad(12.0),
-        slope_pitch=np.deg2rad(4),
+        root_pitch=np.deg2rad(10.0),
+        slope_pitch=np.deg2rad(2),
+        filepath="naca2412.csv"
     )
 
 reset_rotor()
@@ -78,14 +80,80 @@ mp = MissionPlanner(heli)
 
 def reset_mission_planner():
     mp.set_flight_parameters_programmatic(
-        dry_weight=5090,
+        dry_weight=heli.get_total_mass(),
         fuel_weight=900,
         fuel_specific_energy_kj_kg=43000,
         reserve_fuel_fraction=0.1
     )
 
 reset_mission_planner()
+
+
+#Endurance plots
+
+def plot_endurance_vs_weight():
+    weights = [500 * i for i in range(3, 10)]
+    enduraces = []
+    for weight in weights:
+        mp.dry_weight = weight
+        endurance, _ = mp.find_available_hover_time(altitude=2000, dt=400)
+        enduraces.append(round(endurance/60 , ndigits=1))
+
+    plt.plot(weights, enduraces)
+    plt.title('Endurance vs Weight')
+    plt.xlabel('Weight (N)')
+    plt.ylabel('Endurance (min)')
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig('endurance_vs_weight.png', dpi=300, bbox_inches='tight')
+    plt.show()
+    reset_rotor()
+    reset_mission_planner()
+    reset_heli()
+
+
+
+
+def plot_burnrate_vs_weight():
+    altitude = 2000
+    temperature = env.get_temperature(altitude)
+    pressure = env.get_pressure(temperature, altitude)
+    density = env.get_density(temperature, pressure)
+    
+    weights = [500*i for i in range(3, 10)]
+    vertical_velocities = [10*i for i in range(10)]
+    omega_fixed = 30.0
+    
+    colors = plt.cm.viridis(np.linspace(0, 1, len(vertical_velocities)))
+    
+    data = {}
+    for idx, v in enumerate(vertical_velocities):
+        burnrate = []
+        
+        for weight in weights:
+            burnrate.append(heli.find_power_needed(weight=weight, vertical_velocity=v, omega=omega_fixed, altitude=altitude))
+
+        data[v] = {'burnrate': burnrate}
+
+    plt.figure(figsize=(10, 6))
+    for idx, v in enumerate(vertical_velocities):
+        plt.plot(weights, data[v]['burnrate'], color=colors[idx], linewidth=2, label=f'v = {v} m/s')
+
+    plt.title('Burnrate vs Weight')
+    plt.xlabel('Weight (N)')
+    plt.ylabel('Burnrate (kW)')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig('burnrate_vs_weight.png', dpi=300, bbox_inches='tight')
+    plt.show()
+    
+
+
 if __name__ == "__main__":
-    print(mp.find_max_hover_weight(altitude=2000, stall_constraint=False, power_constraint=True))
-    
-    
+    print(mp.find_max_hover_weight(altitude=2000, stall_constraint=False, power_constraint=True, iterations=100))
+    # print(mp.helicopter.main_rotor.stall_maxWeight(0, 2000))
+    plot_endurance_vs_weight()
+    plot_burnrate_vs_weight()
+
+    # print(mp.find_max_takeoff_weight(altitude=2000, stall_constraint=True, power_constraint=True))

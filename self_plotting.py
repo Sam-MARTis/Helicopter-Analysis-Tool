@@ -35,16 +35,17 @@ density_2000m = env.get_density(temperature_2000m)
 
 rotor = Rotor(environment=env)
 def reset_rotor():
-    rotor.set_rotor_parameters(
+        rotor.set_rotor_parameters(
         number_of_blades=3,
-        blade_mass=75,
+        blade_mass=0,
         NACA_for_airfoil="0012",
         radius_of_rotors=6.6,
         root_cutout=0.3,
-        root_chord=0.4,
-        tip_chord=0.3,
-        root_pitch=np.deg2rad(10.0),
-        slope_pitch=np.deg2rad(3),
+        root_chord=1.0,
+        tip_chord=0.9,
+        root_pitch=np.deg2rad(15.0),
+        slope_pitch= -np.deg2rad(1),
+        filepath="naca2412.csv"
     )
     
 reset_rotor()
@@ -56,7 +57,7 @@ def plot_quantities_vs_omega():
     density = env.get_density(temperature, pressure)
     
     vertical_velocities = [0, 5, 10, 15, 20, 25, 30, 35, 40]  
-    omegas = [4*i for i in range(1, 21)]  
+    omegas = [4*i for i in range(5, 21)]  
 
     colors = plt.cm.viridis(np.linspace(0, 1, len(vertical_velocities)))
     
@@ -123,7 +124,6 @@ def plot_quantities_vs_omega():
     reset_rotor()
     plt.show()
 
-plot_quantities_vs_omega()
 
 
 def plot_quantities_vs_taper_ratio():
@@ -200,7 +200,6 @@ def plot_quantities_vs_taper_ratio():
     plt.show()
 
 
-plot_quantities_vs_taper_ratio()
 
 
 
@@ -211,8 +210,8 @@ def plot_quantities_vs_twist():
     pressure = env.get_pressure(temperature, altitude)
     density = env.get_density(temperature, pressure)
     
-    twist_values = [0.03*i for i in range(0, 21)]
-    vertical_velocities = [10*i for i in range(10)]
+    twist_values = [ np.deg2rad(0.1*i) for i in range(0, 21)]
+    vertical_velocities = [5*i for i in range(5)]
     omega_fixed = 30.0
     
     colors = plt.cm.viridis(np.linspace(0, 1, len(vertical_velocities)))
@@ -241,9 +240,9 @@ def plot_quantities_vs_twist():
     plt.figure(figsize=(10, 6))
     for idx, v in enumerate(vertical_velocities):
         plt.plot(twist_values, data[v]['thrust'], color=colors[idx], linewidth=2, label=f'v = {v} m/s')
-    
-    plt.title('Thrust vs Twist')
-    plt.xlabel('Twist (slope_pitch)')
+
+    plt.title('Thrust vs Twist, ' + str(omega_fixed) + ' rad/s')
+    plt.xlabel('Twist (slope_pitch) (rad/m)')
     plt.ylabel('Thrust (N)')
     plt.legend()
     plt.grid(True, alpha=0.3)
@@ -254,9 +253,9 @@ def plot_quantities_vs_twist():
     plt.figure(figsize=(10, 6))
     for idx, v in enumerate(vertical_velocities):
         plt.plot(twist_values, data[v]['power'], color=colors[idx], linewidth=2, label=f'v = {v} m/s')
-    
-    plt.title('Power vs Twist')
-    plt.xlabel('Twist (slope_pitch)')
+
+    plt.title('Power vs Twist, ' + str(omega_fixed) + ' rad/s')
+    plt.xlabel('Twist (slope_pitch) (rad/m)')
     plt.ylabel('Power (kW)')
     plt.legend()
     plt.grid(True, alpha=0.3)
@@ -267,9 +266,9 @@ def plot_quantities_vs_twist():
     plt.figure(figsize=(10, 6))
     for idx, v in enumerate(vertical_velocities):
         plt.plot(twist_values, data[v]['torque'], color=colors[idx], linewidth=2, label=f'v = {v} m/s')
-    
-    plt.title('Torque vs Twist')
-    plt.xlabel('Twist (slope_pitch)')
+
+    plt.title('Torque vs Twist, ' + str(omega_fixed) + ' rad/s')
+    plt.xlabel('Twist (slope_pitch) (rad/m)')
     plt.ylabel('Torque (Nm)')
     plt.legend()
     plt.grid(True, alpha=0.3)
@@ -277,8 +276,13 @@ def plot_quantities_vs_twist():
     plt.savefig('torque_vs_twist.png', dpi=300, bbox_inches='tight')
     plt.show()
 
-plot_quantities_vs_twist()
+
+
+plot_quantities_vs_omega()
+# plot_quantities_vs_taper_ratio()
+# plot_quantities_vs_twist()
 
 
 
 # plot_quantities_vs_taper_ratio()
+
