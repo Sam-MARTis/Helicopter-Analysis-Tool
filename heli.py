@@ -67,7 +67,7 @@ class Environment:
         if not self.environment_set:
             raise ValueError("Environment parameters have not been set.")
         sound_speed: float = self.get_speed_of_sound(temperature)
-        return velocity / sound_speed
+        return min(velocity / sound_speed, 0.9)
 
     def get_density(self, temperature: float, pressure: Optional[float] = None) -> float:
         if not self.environment_set:
@@ -519,17 +519,27 @@ class Rotor:
 
         return performance
     
-    def find_omega_needed_uncoupled(self, thrust_needed, vertical_velocity: float, altitude: float, initial_guess: float, iterations: int= 10, tol: float = 0.05) -> float:
+    def find_omega_needed_uncoupled(self, thrust_needed, vertical_velocity: float, altitude: float, initial_guess: float, iterations: int= 300, tol: float = 0.05) -> float:
         temperature = self.environment.get_temperature(altitude)
         pressure = self.environment.get_pressure(temperature, altitude)
         density = self.environment.get_density(temperature=temperature, pressure=pressure)
-        omega = initial_guess
+        omega = initial_guess*0.9
+        domega = initial_guess*0.1
+        prev_exceeded = False
         for _ in range(iterations):
+            omega += domega
             thrust = self.total_thrust(vertical_velocity, omega, density)
             if abs(thrust - thrust_needed) < tol:
                 return omega
-            d_fraction = (thrust_needed - thrust) / thrust
-            omega *= (1 + d_fraction*0.5)
+            if(thrust > thrust_needed):
+                if(not prev_exceeded):
+                    domega *= -0.5
+                prev_exceeded = True
+            else:
+                if(prev_exceeded):
+                    domega *= -0.5
+                prev_exceeded = False
+                
         if(abs(thrust - thrust_needed) > 10*tol):
             print("Warning: Omega calculation did not converge")
         return omega
@@ -657,45 +667,10 @@ class Helicopter:
         if self.tail_rotor_set and self.tail_rotor:
             total_mass += self.tail_rotor.blade_mass * self.tail_rotor.number_of_blades
         return total_mass
-    """
-    # def calculate_hover_performance(self, omega: float, n_divisions: int = 50) -> Dict[str, float]:
-    #     if not self.main_rotor_set:
-    #         raise ValueError("Rotor has not been set up.")
-
-    #     density: float = 1.2
-    #     if self.environment and self.environment.environment_set:
-    #         temperature: float = self.environment.get_temperature()
-    #         pressure: float = self.environment.get_pressure(temperature)
-    #         density = self.environment.get_density(temperature, pressure)
-
-    #     climb_velocity = 0
-    #     return self.main_rotor.calculate_performance(climb_velocity, omega, density, n_divisions)
-
-    # def calculate_thrust_required_for_hover(self) -> float:
-    #     total_mass: float = self.get_total_mass()
-    #     g: float
-    #     if self.environment and self.environment.environment_set:
-    #         g = self.environment.gravitational_acceleration
-    #     else:
-    #         g = 9.80665
-    #     return total_mass * g
-
-    # def can_hover(self, omega: float, climb_velocity: float = 0, n_divisions: int = 50) -> Tuple[bool, str]:
-    #     if not self.main_rotor_set:
-    #         return False, "Rotor parameters not set"
-
-    #     performance: Dict[str, float] = self.calculate_hover_performance(omega, n_divisions)
-    #     thrust_required: float = self.calculate_thrust_required_for_hover()
-
-    #     if performance['thrust'] >= thrust_required:
-    #         return True, f"Can hover. Available thrust: {performance['thrust']:.1f} N, Required: {thrust_required:.1f} N"
-    #     else:
-    #         return False, f"Cannot hover. Available thrust: {performance['thrust']:.1f} N, Required: {thrust_required:.1f} N"
-    """
 
     def find_power_needed(self, weight: float, vertical_velocity: float, altitude: float, omega: float = None, initial_guess: float = 30.0) -> float:
         if omega is None:
-            omega = self.main_rotor.find_omega_needed_uncoupled(thrust_needed=weight, vertical_velocity=vertical_velocity, altitude=altitude, initial_guess=initial_guess)
+            omega = self.main_rotor.find_omega_needed_uncoupled(thrust_needed=weight*self.environment.gravitational_acceleration, vertical_velocity=vertical_velocity, altitude=altitude, initial_guess=initial_guess)
         temperature = self.environment.get_temperature(altitude=altitude)
         density = self.environment.get_density(temperature=temperature)
         performance = self.main_rotor.calculate_performance(vertical_velocity, omega, density)
@@ -848,7 +823,7 @@ class MissionPlanner:
         
         if(self.helicopter.is_helicopter_stalling(0, altitude=altitude, omega=omega_needed)):
             return [0, True]
-        for i in range(divisions):
+        for _ in range(divisions):
             omega_needed = self.helicopter.main_rotor.find_omega_needed_uncoupled((self.dry_weight + self.fuel_weight)*self.helicopter.environment.gravitational_acceleration, 0, altitude=altitude, initial_guess=30.0)
             power_needed = self.helicopter.find_power_needed(self.dry_weight + self.fuel_weight - fuel_consumed, 0, altitude=altitude)
             fuel_consumed += power_needed * dt * fuel_specific_energy_inv
@@ -864,7 +839,7 @@ class MissionPlanner:
             return 0, True
         
         time = 0.0
-        fuel_remaining = self.fuel_weight - self.min_fuel
+        fuel_remaining = self.fuel_weight
         fuel_specific_energy_inv = 1.0 / self.fuel_specific_energy
             
     
@@ -876,7 +851,7 @@ class MissionPlanner:
             time += dt
         return time, False
 
-    def find_max_hover_weight(self, altitude, stall_constraint:bool = True, power_constraint:bool = True, iterations:int = 100, initial_omega_guess:float = 30, initial_weight_guess: float = None, tol: float = 1e-1) -> float:
+    def find_max_hover_weight(self, altitude, stall_constraint:bool = False, power_constraint:bool = True, iterations:int = 100, initial_omega_guess:float = 30, initial_weight_guess: float = None, tol: float = 1e-1) -> float:
         if not self.flight_parameters_set:
             print("Flight parameters not set. Please set them first.")
             return [-2, True]
@@ -930,6 +905,57 @@ class MissionPlanner:
                 power_max_weight = weight
         return min(stall_max_weight, power_max_weight), stall_max_weight, power_max_weight
     
+    
+    # def stall_maxWeight(self, climb_Velocity, altitude, omega):
+    #     stall = 0
+    #     temperature = self.environment.get_temperature(self, altitude)
+    #     pressure = self.environment.get_density(temperature, altitude)
+    #     density = self.environment.get_density(temperature, pressure)
+
+    #     pitch_factor = 1
+    #     while not stall:
+    #       r: np.ndarray = np.linspace(self.root_cutout, self.radius_of_rotors, n_divisions)
+    #       delta_r: float = r[1] - r[0]
+
+    #       dL_list: List[float] = []
+    #       dD_list: List[float] = []
+    #       dT_list: List[float] = []
+
+    #       for i in range(len(r)):
+    #           chord: float = self.get_chord_length(r[i])
+    #           cl, stall, cL_stall = self.get_cL(r[i], climb_velocity,pitch_factor)
+    #           cd: float = self.get_cD(r[i], climb_velocity, pitch_factor)
+              
+    #           lambda_inflow: float
+    #           lambda_inflow, _ = self.elemental_inflow_ratio(r[i], climb_velocity, omega)
+    #           phi: float = self.get_phi_r(r[i], climb_velocity)
+              
+    #           if stall:
+    #               break
+              
+    #           else:
+    #             velocity_squared: float = (self.omega * r[i]) * 2 + (lambda_inflow * self.omega * self.radius_of_rotors) * 2
+
+    #             dL: float = 0.5 * density * chord * cl * velocity_squared
+    #             dD: float = 0.5 * density * chord * cd * velocity_squared
+    #             dT: float = (dL * np.cos(phi) - dD * np.sin(phi)) * delta_r
+
+    #             dT_list.append(dT)
+
+
+    #       if not stall:
+    #         Thrust = np.sum(dT_list) * self.number_of_blades
+    #         safe_Thrust = Thrust
+    #         pitch_factor = pitch_factor*1.05
+
+    #       if stall:
+    #         gross_weight = safe_Thrust
+    #         break
+
+    #     return gross_weight
+    
+    # def find_stall_omega(self, climb_velocity, altitude, initial_):
+        
     
     
     

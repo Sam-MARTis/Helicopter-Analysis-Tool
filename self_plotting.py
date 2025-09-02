@@ -41,8 +41,8 @@ def reset_rotor():
         NACA_for_airfoil="0012",
         radius_of_rotors=6.6,
         root_cutout=0.3,
-        root_chord=0.9,
-        tip_chord=0.5,
+        root_chord=0.4,
+        tip_chord=0.3,
         root_pitch=np.deg2rad(10.0),
         slope_pitch=np.deg2rad(3),
     )
@@ -123,7 +123,7 @@ def plot_quantities_vs_omega():
     reset_rotor()
     plt.show()
 
-# plot_quantities_vs_omega()
+plot_quantities_vs_omega()
 
 
 def plot_quantities_vs_taper_ratio():
@@ -200,7 +200,7 @@ def plot_quantities_vs_taper_ratio():
     plt.show()
 
 
-# plot_quantities_vs_taper_ratio()
+plot_quantities_vs_taper_ratio()
 
 
 

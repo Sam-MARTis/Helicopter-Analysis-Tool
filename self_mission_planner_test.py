@@ -1,10 +1,5 @@
-from heli import Helicopter, Rotor, MissionPlanner, Environment
+from heli import Rotor, Helicopter, Environment, MissionPlanner
 import numpy as np
-
-
-
-
-
 env = Environment()
 env.set_atmosphere_parameters(
     temperature_sea_level=288.15,
@@ -21,6 +16,7 @@ temperature_2000m = env.get_temperature(2000)
 density_2000m = env.get_density(temperature_2000m)
 
 rotor1 = Rotor(environment=env)
+
 rotor2 = Rotor(environment=env)
 def reset_rotor():
     rotor1.set_rotor_parameters(
@@ -75,17 +71,18 @@ def reset_heli():
 reset_heli()
 
 mp = MissionPlanner(heli)
-
 def reset_mission_planner():
     mp.set_flight_parameters_programmatic(
         dry_weight=5090,
-        fuel_weight=900,
+        fuel_weight=1000,
         fuel_specific_energy_kj_kg=43000,
         reserve_fuel_fraction=0.1
     )
 
 reset_mission_planner()
 if __name__ == "__main__":
-    print(mp.find_max_hover_weight(altitude=2000, stall_constraint=False, power_constraint=True))
+    # print(mp.find_max_hover_weight(altitude=2000, stall_constraint=False, power_constraint=True))
+    print(f"Max hover time is: {mp.find_available_hover_time(altitude=2000, dt=200)[0]/3600:.2f} hours")
+    print(f"Max take off weight due to power constraints is: {mp.find_max_hover_weight(altitude=2000, stall_constraint=False, power_constraint=True)[0]:.2f} kg")
     
-    
+
