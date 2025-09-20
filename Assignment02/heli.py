@@ -8,16 +8,22 @@ TOLERANCE = 1e-6 #Convergence tolerance
 TOLERANCE2 = 1e-8 # Divide by zero tolerance
 F_MAX_CAP = 50
 
+MACH_CAP = 0.8
+
 ITERATION_RELAXATION = 0.9
 
+a_DEFAULT = 5.75  
+F_DEFAULT = 1.1
+k_DEFAULT = 0.037807
+CD0 = 0.0113
 
 
 @njit 
-def solve_iteratively_lambda_inflow_optimized(r: float, rmax: float, b:float,  θ: float, Ω: float, Vy: float, itermax: int = MAX_ITERATIONS, tol: float = TOLERANCE) -> float:
+def solve_iteratively_lambda_inflow_optimized(r: float, rmax: float, b:int,  θ: float, Ω: float, Vy: float, itermax: int = MAX_ITERATIONS, tol: float = TOLERANCE):
     λᵪ = Vy / (Ω * rmax)
     σ = (b * r) / (np.pi * rmax)
-    a = 5.75
-    F = 1.1
+    a = a_DEFAULT
+    F = F_DEFAULT
     λ = λᵪ
     
     for _ in range(itermax):
@@ -42,7 +48,61 @@ def solve_iteratively_lambda_inflow_optimized(r: float, rmax: float, b:float,  �
         λ += ITERATION_RELAXATION * dλ
         F += ITERATION_RELAXATION * dF
 
-    return λ, F
+    return [λ, F]
+
+
+@njit
+def get_Cl_Cd_from_λ(r: float, rmax:float,rmin:float, rp:float, sp:float, λ: float, Ω: float, sound_speed:float, a: float = a_DEFAULT, k: float = k_DEFAULT) -> Tuple[float, float]:
+    pitch = rp + sp * (r - rmin)
+    φ: float = np.arctan(λ * rmax / r)
+    
+    effective_α = pitch - φ
+    Mach_number = (Ω * r) / sound_speed
+    if Mach_number > MACH_CAP:
+        Mach_number = MACH_CAP
+        print(f"Warning: Mach number capped at {MACH_CAP}. Actual Mach number would be {Mach_number:.3f}")
+    compressibility_factor = 1 / np.sqrt(1 - Mach_number**2)
+    Cl = a * (effective_α) * compressibility_factor
+
+    Cd = CD0 + k * Cl**2
+    return Cl, Cd
+
+@njit(parallel=True)
+def get_rotor_outputs(rmin: float, rmax: float, b: int, rp:float, sp: float, rc:float, tc:float,  Vy: float, Ω: float, sound_speed: float, divisions: int):
+    # dL_arr = np.zeros(divisions)
+    # dD_arr = np.zeros(divisions)
+    dT_arr = np.zeros(divisions)
+    dQ_arr = np.zeros(divisions)
+    dP_arr = np.zeros(divisions)
+    values = np.zeros(3)
+    # dFx_arr = np.zeros(divisions)
+    r = np.linspace(rmin, rmax, divisions)
+    dr = (rmax - rmin) / (divisions)
+    
+    for i in range(divisions):
+        chord = rc - (rc - tc) * (r[i] - rmin) / (rmax - rmin)
+        plain_pitch = rp + sp * (r[i] - rmin)
+        λ, F = solve_iteratively_lambda_inflow_optimized(r=r[i], rmax=rmax, b=b, θ= plain_pitch, Ω=Ω, Vy=Vy)
+        Cl, Cd = get_Cl_Cd_from_λ(r=r[i], rmax=rmax, rmin=rmin, rp=rp, sp=sp, λ=λ, Ω=Ω, sound_speed=sound_speed)
+        effective_α = plain_pitch- np.arctan(λ * rmax / r[i])
+
+        Vsq = (Ω * r[i])**2 + np.square(λ * Ω * rmax)
+        dD = 0.5 * (b * chord) * Cd * Vsq * F
+        dL = 0.5 * (b * chord) * Cl * Vsq * F
+        dT = (dL *np.cos(effective_α) - dD * np.sin(effective_α)) * dr
+        dFx = (dL *np.sin(effective_α) + dD * np.cos(effective_α)) * dr
+        dQ = (dFx * r[i]) * dr
+        dP = Ω * dQ
+        
+        dT_arr[i] = dT
+        dQ_arr[i] = dQ
+        dP_arr[i] = dP
+    
+    values[0] = np.sum(dT_arr)
+    values[1] = np.sum(dQ_arr)
+    values[2] = np.sum(dP_arr)
+    
+    return values
 
 class Environment:
     def __init__(self) -> None:
@@ -99,13 +159,11 @@ class Rotor:
         self.root_pitch: Optional[float] = None
         self.slope_pitch: Optional[float] = None
         self.default_airfoil:bool = True
-        self.NACA_for_airfoil: Optional[str] = None
         
     def set_rotor_parameters(self, number_of_blades: int, radius_of_rotors: float,
                             root_cutout: float, root_chord: float,
                             tip_chord: float, root_pitch: float,
-                            slope_pitch: float, default_airfoil: bool = True,
-                            NACA_for_airfoil: Optional[str] = None) -> None:
+                            slope_pitch: float, default_airfoil: bool = True) -> None:
         self.parameters_set = True
         self.number_of_blades = number_of_blades
         self.radius_of_rotors = radius_of_rotors
@@ -115,7 +173,6 @@ class Rotor:
         self.root_pitch = root_pitch
         self.slope_pitch = slope_pitch
         self.default_airfoil = default_airfoil
-        self.NACA_for_airfoil = NACA_for_airfoil
         
     def get_chord_length(self, r: float) -> float:
         assert self.parameters_set, "Rotor parameters not set. Please set them using 'set_rotor_parameters' method."
@@ -130,3 +187,45 @@ class Rotor:
     
     def solve_λ_inflow(self, r: float, Vy: float, Ω: float, itermax: int = MAX_ITERATIONS, tol: float = TOLERANCE) -> float:
         return solve_iteratively_lambda_inflow_optimized(r, self.radius_of_rotors, self.number_of_blades, self.get_pitch_angle(r), Ω, Vy, itermax, tol)
+
+
+    def get_effective_α(self, r: float, λ: float) -> float:
+        if not self.parameters_set:
+            raise ValueError("Rotor parameters have not been set.")
+        φ: float = np.arctan(λ * self.radius_of_rotors / r)
+        θ: float = self.get_pitch_angle(r)
+        return θ - φ
+
+    def compressibility_correction(self, Ω: float, altitude: float) -> float:
+        assert self.environment.environment_set, "Environment parameters not set. Please set them using 'set_atmosphere_parameters' method."
+        speed_of_sound = self.environment.get_speed_of_sound(altitude)
+        tip_speed = Ω * self.radius_of_rotors
+        Mach_number = tip_speed / speed_of_sound
+        if Mach_number > MACH_CAP:
+            Mach_number = MACH_CAP
+            print(f"Warning: Mach number capped at {MACH_CAP}. Actual Mach number would be {Mach_number:.3f}")
+        return 1 / np.sqrt(1 - Mach_number**2)
+        
+    def get_Cl(self, r:float, Vy:float, λ:float, Ω: float, altitude:float, a: float = a_DEFAULT) -> float:
+        assert self.parameters_set, "Rotor parameters not set. Please set them using 'set_rotor_parameters' method."
+        α = self.get_pitch_angle(r)
+        compressibility_factor = self.compressibility_correction(Ω, altitude)
+        if self.default_airfoil:
+            α_L0 = 0.0
+            Cl = a * (α) * compressibility_factor
+        else:
+            raise NotImplementedError("Custom airfoil data handling not implemented yet.")
+        
+    def get_Cd(self, r:float, Vy:float, λ:float, Ω: float, altitude:float, a: float = a_DEFAULT, k: float = k_DEFAULT) -> float:
+        assert self.parameters_set, "Rotor parameters not set. Please set them using 'set_rotor_parameters' method."
+        α = self.get_pitch_angle(r)
+        compressibility_factor = self.compressibility_correction(Ω, altitude)
+        if self.default_airfoil:
+            α_L0 = 0.0
+            Cl = a * (α) * compressibility_factor
+            Cd0 = 0.01  
+            k = 0.02    
+            Cd = Cd0 + k * Cl**2
+        else:
+            raise NotImplementedError("Custom airfoil data handling not implemented yet.")
+        return Cd

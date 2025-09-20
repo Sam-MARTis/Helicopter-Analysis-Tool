@@ -282,6 +282,9 @@ class Rotor:
         return lambda_inflow, F
 
     def get_phi_r(self, r_distance: float, climb_velocity: float, omega: float, lambda_inflow: float = None) -> float:
+        """
+        Effective pitch due to inflow
+        φ = tan⁻¹(λR/r)"""
         if not self.parameters_set:
             raise ValueError("Rotor parameters have not been set.")
         if lambda_inflow is None:
@@ -486,24 +489,6 @@ class Rotor:
         return net_power
 
     def calculate_performance(self, climb_velocity: float, omega: float, density: float, n_divisions: int = 50, cm: float = 0.1) -> Dict[str, float]:
-        """
-          calculates the performance of the rotor
-
-          inputs:
-          1. climb_velocity
-          2. n_divisions
-          3. density
-
-          returns:
-            performance
-              1. thrust
-              2. torque
-              3. power
-              4. lift
-              5. drag
-
-        """
-
         if not self.parameters_set:
             raise ValueError("Rotor parameters have not been set.")
 
