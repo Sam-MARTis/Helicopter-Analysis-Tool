@@ -203,7 +203,7 @@ class Rotor:
         # Function to get chord_length at a given location.
         if not self.parameters_set:
             raise ValueError("Rotor parameters have not been set.")
-        return self.root_chord - ((self.root_chord - self.tip_chord) / (self.radius_of_rotors - self.root_cutout)) * x
+        return self.root_chord - ((self.root_chord - self.tip_chord) / (self.radius_of_rotors - self.root_cutout)) * (x - self.root_cutout)
 
     def get_pitch(self, x: float) -> float:
         # Basically involving twists
