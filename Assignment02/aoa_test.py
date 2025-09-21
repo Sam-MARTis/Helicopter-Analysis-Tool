@@ -22,9 +22,10 @@ CD0 = 0.0113
 
 
 @njit(cache=True)
-def solve_iteratively_lambda_inflow_optimized(r: float, rmax: float, c, b:int,  θ: float, Ω: float, Vy: float, itermax: int = MAX_ITERATIONS, tol: float = TOLERANCE):
+def solve_iteratively_lambda_inflow_optimized(r: float, rmax: float, rmin:float, b:int, rc:float, tc:float, θ: float, Ω: float, Vy: float, itermax: int = MAX_ITERATIONS, tol: float = TOLERANCE):
     λᵪ = Vy / (Ω * rmax)
-    σ = (b * c) / (np.pi * r)
+    c = rc - (rc - tc) * (r - rmax) / (rmax - rmin)
+    σ = (b * c) / (np.pi * rmax)
     a = a_DEFAULT
     F = F_DEFAULT
     λ = λᵪ
@@ -33,19 +34,14 @@ def solve_iteratively_lambda_inflow_optimized(r: float, rmax: float, c, b:int,  
         if F <= TOLERANCE2:
             F = TOLERANCE2
 
-        λₙ = np.sqrt(np.square((σ * a) / (16 * F) - (λᵪ * 0.5)) + ((σ * a) / (8 * F)) * θ * (r / rmax))
+        λₙ = np.sqrt(np.square((σ * a) / (16 * F) - (λᵪ * 0.5)) + ((σ * a) / (8 * F)) * θ * (r / rmax)) - (σ*a/(16*F) - λᵪ/2)
         
         if λₙ < TOLERANCE2:
             λₙ = TOLERANCE2
 
         f = (b*0.5)  * (1-r/rmax)/λₙ
 
-        # Clamp f to be within acceptable range instead of using assert
-        if f <= TOLERANCE2:
-            f = TOLERANCE2
-        # elif f >= f_MAX_CAP:
-        #     f = f_MAX_CAP
-            
+        # assert F_MAX_CAP>f>TOLERANCE2
         Fₙ = (2/np.pi) * np.arccos(np.exp(-f))
         dλ = abs(λₙ - λ)
         dF = abs(Fₙ - F)
@@ -59,8 +55,7 @@ def solve_iteratively_lambda_inflow_optimized(r: float, rmax: float, c, b:int,  
 
     return λ, F
 
-
-@njit
+@njit(cache=True)
 def get_Cl_Cd_from_λ(r: float, rmax:float,rmin:float, rp:float, sp:float, λ: float, Ω: float, sound_speed:float, a: float = a_DEFAULT, k: float = k_DEFAULT) -> Tuple[float, float]:
     pitch = rp + sp * (r - rmin)
     φ: float = np.arctan(λ * rmax / r)
@@ -89,8 +84,8 @@ def get_rotor_outputs(rmin: float, rmax: float, b: int, rp:float, sp: float, rc:
     
     for i in range(divisions):
         chord = rc - (rc - tc) * (r[i] - rmin) / (rmax - rmin)
-        plain_pitch = rp + sp * (r[i] - rmin)
-        λ, F = solve_iteratively_lambda_inflow_optimized(r=r[i], rmax=rmax, b=b, θ= plain_pitch, Ω=Ω, Vy=Vy)
+        plain_pitch = float(rp + sp * (1.0 * r[i] - rmin))
+        [λ, F] = solve_iteratively_lambda_inflow_optimized(r=r[i], rmax=rmax, rmin=rmin, b=b, rc=rc, tc=tc, θ=plain_pitch, Ω=Ω, Vy=Vy)
         Cl, Cd = get_Cl_Cd_from_λ(r=r[i], rmax=rmax, rmin=rmin, rp=rp, sp=sp, λ=λ, Ω=Ω, sound_speed=sound_speed)
         effective_α = plain_pitch- np.arctan(λ * rmax / r[i])
 
@@ -113,14 +108,15 @@ def get_rotor_outputs(rmin: float, rmax: float, b: int, rp:float, sp: float, rc:
     return values
 
 @njit(parallel=True)
-def calculate_effective_aoa_vs_r(rmin: float, rmax: float, b: int, rp:float, sp: float, Vy: float, Ω: float, sound_speed: float, divisions: int = ROTOR_DIVISIONS_01):
+def calculate_effective_aoa_vs_r(rmin: float, rmax: float, b: int, rc: float, tc: float, rp: float, sp: float, Vy: float, Ω: float, sound_speed: float, divisions: int = ROTOR_DIVISIONS_01):
     r = np.linspace(rmin, rmax, divisions)
     effective_α_arr = np.zeros(divisions)
     λ_arr = np.zeros(divisions)
     for i in range(divisions):
-        λ, F = solve_iteratively_lambda_inflow_optimized(r[i], rmax, b, rp + sp * (r[i] - rmin), Ω, Vy)
+        θ = rp + sp * (r[i] - rmin)
+        λ, F = solve_iteratively_lambda_inflow_optimized(r=r[i], rmax=rmax, rmin=rmin, b=b, rc=rc, tc=tc, θ=θ, Vy=Vy, Ω=Ω)
         λ_arr[i] = λ
-        effective_α_arr[i] = rp + sp * (r[i] - rmin) - np.arctan(λ * rmax / r[i])
+        effective_α_arr[i] = θ - np.arctan(λ * rmax / r[i])
     return r, effective_α_arr
 
 class Environment:
@@ -204,8 +200,8 @@ class Rotor:
         assert self.parameters_set, "Rotor parameters not set. Please set them using 'set_rotor_parameters' method."
         return self.root_pitch + self.slope_pitch * (r - self.root_cutout)
     
-    def solve_λ_inflow(self, r: float, Vy: float, Ω: float, itermax: int = MAX_ITERATIONS, tol: float = TOLERANCE) -> float:
-        return solve_iteratively_lambda_inflow_optimized(r, self.radius_of_rotors, self.number_of_blades, self.get_pitch_angle(r), Ω, Vy, itermax, tol)
+    def solve_λ_inflow(self, r: float, Vy: float, Ω: float, itermax: int = MAX_ITERATIONS, tol: float = TOLERANCE):
+        return solve_iteratively_lambda_inflow_optimized(r=r, rmax=self.radius_of_rotors, rmin=self.root_cutout, rc=self.root_chord, tc=self.tip_chord, b=self.number_of_blades, θ=self.get_pitch_angle(r), Ω=Ω, Vy=Vy, itermax=itermax, tol=tol)
 
 
     def get_effective_α(self, r: float, λ: float) -> float:
@@ -264,10 +260,16 @@ class Rotor:
         Q = values[1]
         P = values[2] 
         return {"thrust": T, "torque": Q, "power": P}
-    def plot_effectiive_aoa_vs_r(self, Vy: float, Ω: float, altitude: float, divisions: int = ROTOR_DIVISIONS_01) -> Tuple[np.ndarray, np.ndarray]:
+    def plot_effective_aoa_vs_r(self, Vy: float, Ω: float, altitude: float, divisions: int = ROTOR_DIVISIONS_01) -> Tuple[np.ndarray, np.ndarray]:
 
         assert self.parameters_set, "Rotor parameters not set. Please set them using 'set_rotor_parameters' method."
         assert self.environment.environment_set, "Environment parameters not set. Please set them using 'set_atmosphere_parameters' method."
+        r, effective_α_arr = calculate_effective_aoa_vs_r(rmin=self.root_cutout, rmax=self.radius_of_rotors, b=self.number_of_blades,
+                                  rc=self.root_chord, tc=self.tip_chord, rp=self.root_pitch, sp=self.slope_pitch,
+                                  Vy=Vy + self.environment.wind_velocity, Ω=Ω,
+                                  sound_speed=self.environment.get_speed_of_sound(altitude),
+                                  divisions=divisions)
+        
         # r = np.linspace(self.root_cutout, self.radius_of_rotors, divisions)
         # effective_α_arr = np.zeros(divisions)
         # λ_arr = np.zeros(divisions)
@@ -276,22 +278,31 @@ class Rotor:
         #     λ_arr[i] = λ
         #     effective_α_arr[i] = self.get_effective_α(r[i], λ)
         
-        plt.plot(r, np.degrees(effective_α_arr))
+        plt.plot(r, np.degrees(effective_α_arr), label='Ω')
+        r, effective_α_arr = calculate_effective_aoa_vs_r(rmin=self.root_cutout, rmax=self.radius_of_rotors, b=self.number_of_blades,
+                                  rc=self.root_chord, tc=self.tip_chord, rp=self.root_pitch, sp=self.slope_pitch,
+                                  Vy=Vy + self.environment.wind_velocity, Ω=Ω/3,
+                                  sound_speed=self.environment.get_speed_of_sound(altitude),
+                                  divisions=divisions)
+        plt.plot(r, np.degrees(effective_α_arr), linestyle='--', label='Ω/3')   
         plt.xlabel("Radius (m)")
         plt.ylabel("Effective Angle of Attack (degrees)")
         plt.title("Effective Angle of Attack vs Radius")
         plt.grid()
+        plt.legend()
         plt.show()
         
-        return r, effective_α_arr
+        # return r, effective_α_arr
     
 if __name__ == "__main__":
     env = Environment()
     env.set_atmosphere_parameters(temperature_sea_level=288.15, Reynolds_number=1e6, pressure_sea_level=101325,
                                   Lapse_rate_troposphere=0.0065, wind_velocity=0, ISA_OFFSET=0)
     heli = Rotor(environment=env)
-    heli.set_rotor_parameters(number_of_blades=4, radius_of_rotors=5, root_cutout=0.5, root_chord=0.3,
-                              tip_chord=0.1, root_pitch=np.radians(10), slope_pitch=np.radians(1), default_airfoil=True)
+    heli.set_rotor_parameters(number_of_blades=4, radius_of_rotors=5, root_cutout=0.1, root_chord=0.4,
+                              tip_chord=0.3, root_pitch=np.radians(20), slope_pitch=np.radians(2), default_airfoil=True)
     
-    # performance = heli.get_rotor_performance(Vy=0, Ω=30, altitude=1000, divisions=100)
+    # performance = heli.get_rotor_performance(Vy=0, Ω=30, altitude=1000, divisions=10000)
     # print(performance)
+
+    heli.plot_effective_aoa_vs_r(Vy=30, Ω=100, altitude=1000, divisions=1000)

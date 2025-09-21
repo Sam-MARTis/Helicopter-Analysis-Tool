@@ -20,7 +20,7 @@ k_DEFAULT = 0.037807
 CD0 = 0.0113
 
 
-@njit 
+@njit(cache=True)
 def solve_iteratively_lambda_inflow_optimized(r: float, rmax: float, rmin:float, b:int, rc:float, tc:float, θ: float, Ω: float, Vy: float, itermax: int = MAX_ITERATIONS, tol: float = TOLERANCE):
     λᵪ = Vy / (Ω * rmax)
     c = rc - (rc - tc) * (r - rmax) / (rmax - rmin)
@@ -55,7 +55,7 @@ def solve_iteratively_lambda_inflow_optimized(r: float, rmax: float, rmin:float,
     return [λ, F]
 
 
-@njit
+@njit(cache=True)
 def get_Cl_Cd_from_λ(r: float, rmax:float,rmin:float, rp:float, sp:float, λ: float, Ω: float, sound_speed:float, a: float = a_DEFAULT, k: float = k_DEFAULT) -> Tuple[float, float]:
     pitch = rp + sp * (r - rmin)
     φ: float = np.arctan(λ * rmax / r)
