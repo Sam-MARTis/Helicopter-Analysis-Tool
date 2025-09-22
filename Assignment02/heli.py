@@ -341,8 +341,54 @@ class Rotor:
         plt.grid()
         plt.legend()
         plt.show()
+    
+    def copy(self) -> 'Rotor':
+        new_rotor = Rotor(self.environment)
+        if self.parameters_set:
+            new_rotor.set_rotor_parameters(
+                number_of_blades=self.number_of_blades,
+                radius_of_rotors=self.radius_of_rotors,
+                root_cutout=self.root_cutout,
+                root_chord=self.root_chord,
+                tip_chord=self.tip_chord,
+                root_pitch=self.root_pitch,
+                slope_pitch=self.slope_pitch,
+                default_airfoil=self.default_airfoil
+            )
+        return new_rotor
+class Engine:
+    def __init__(self, max_power: float, mass: float) -> None:
+        self.max_power = max_power
+        self.mass = mass
+class Fuselage:
+    def __init__(self) -> None:
+        self.parameters_set: bool = False
+        self.Cd0: Optional[float] = None
+        self.f: Optional[float] = None
+        self.rotor1_location: Optional[float] = None
+        
 
+class Helicopter:
+    def __init__(self, environment: Environment) -> None:
+        self.environment = environment
+        self.main_rotor: Optional[Rotor] = None
+        self.tail_rotor: Optional[Rotor] = None
+        self.parameters_set: bool = False
+        self.fuselage: Optional[float] = None
+        self.cg_location: Optional[Tuple[float, float, float]] = None
+        self.main_rotor_location: Optional[Tuple[float, float, float]] = None
+        self.tail_rotor_location: Optional[Tuple[float, float, float]] = None
+        self.inertia_tensor: Optional[np.ndarray] = None
+        
+    def set_helicopter_parameters(self, mass: float, cg_location: Tuple[float, float, float],
+                                 main_rotor_location: Tuple[float, float, float],
+                                 tail_rotor_location: Tuple[float, float, float],
+                                 inertia_tensor: np.ndarray) -> None:
+        self.parameters_set = True
+        self.mass = mass
+        self.cg_location = cg_location
+        self.main_rotor_location = main_rotor_location
+        self.tail_rotor_location = tail_rotor_location
+        self.inertia_tensor = inertia_tensor
 
-
-
-
+    
