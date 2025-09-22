@@ -6,7 +6,8 @@ import matplotlib.pyplot as plt
 
 MAX_ITERATIONS = 100
 ROTOR_DIVISIONS_01 = 100
-
+ITERATION_OMEGA_CONVERGENCE = 100
+ITERATION_POWER_CONVERGENCE = 100
 TOLERANCE = 1e-6 #Convergence tolerance
 TOLERANCE2 = 1e-8 # Divide by zero tolerance
 # f_MAX_CAP = 50
@@ -70,7 +71,7 @@ def get_Cl_Cd_from_λ(r: float, rmax:float,rmin:float, rp:float, sp:float, λ: f
     Cd = CD0 + k * Cl**2
     return Cl, Cd
 
-@njit(parallel=True)
+@njit(cache=True, parallel=True)
 def get_rotor_outputs(rmin: float, rmax: float, b: int, rp:float, sp: float, rc:float, tc:float,  Vy: float, Ω: float, sound_speed: float, density:float, divisions: int = ROTOR_DIVISIONS_01) -> np.ndarray:
 
     dT_arr = np.zeros(divisions)
@@ -259,6 +260,65 @@ class Rotor:
         Q = values[1]
         P = values[2] 
         return {"thrust": T, "torque": Q, "power": P}
+    
+    def find_omega_needed_for_thrust_uncoupled(self, target_thrust:float, Vy:float, altitude: float, Ω_initial:float, Ω_step: float, Ω_max:float, tol:float= TOLERANCE, itermax: int = ITERATION_OMEGA_CONVERGENCE) -> float:
+        assert self.parameters_set, "Rotor parameters not set. Please set them using 'set_rotor_parameters' method."
+        assert self.environment.environment_set, "Environment parameters not set. Please set them using 'set_atmosphere_parameters' method."
+        density = self.environment.get_density(altitude)
+        sound_speed = self.environment.get_speed_of_sound(altitude)
+        Ω = Ω_initial
+        for _ in range(itermax):
+            if Ω > Ω_max:
+                return [False, float('inf')]
+            values = get_rotor_outputs(rmin=self.root_cutout, rmax=self.radius_of_rotors, b=self.number_of_blades,
+                                  rp=self.root_pitch, sp=self.slope_pitch, rc=self.root_chord, tc=self.tip_chord,
+                                  Vy=Vy, Ω=Ω, sound_speed=sound_speed, density=density,
+                                  divisions=ROTOR_DIVISIONS_01)
+            T = values[0]
+            if abs(T - target_thrust) < tol:
+                return [True, Ω]
+            if T < target_thrust:
+                Ω += Ω_step
+            else:
+                Ω_step *= 0.5
+                Ω -= Ω_step
+        return [False, float('inf')]
+    
+    def max_thrust_omega_by_power(self, available_power: float, Vy: float, altitude: float, Ω_initial: float, Ω_step: float, Ω_max: float, tol: float = TOLERANCE, itermax: int = ITERATION_POWER_CONVERGENCE) :
+        assert self.parameters_set, "Rotor parameters not set. Please set them using 'set_rotor_parameters' method."
+        assert self.environment.environment_set, "Environment parameters not set. Please set them using 'set_atmosphere_parameters' method."
+        density = self.environment.get_density(altitude)
+        sound_speed = self.environment.get_speed_of_sound(altitude)
+        Ω = Ω_initial
+        max_thrust = 0.0
+        best_Ω = 0.0
+        for _ in range(itermax):
+            if Ω > Ω_max:
+                break
+            values = get_rotor_outputs(rmin=self.root_cutout, rmax=self.radius_of_rotors, b=self.number_of_blades,
+                                  rp=self.root_pitch, sp=self.slope_pitch, rc=self.root_chord, tc=self.tip_chord,
+                                  Vy=Vy + self.environment.wind_velocity, Ω=Ω, sound_speed=sound_speed, density=density,
+                                  divisions=ROTOR_DIVISIONS_01)
+            T = values[0]
+            P = values[2]
+            if P > available_power:
+                Ω_step *= 0.5
+                Ω -= Ω_step
+            else:
+                if T > max_thrust:
+                    max_thrust = T
+                    best_Ω = Ω
+                Ω += Ω_step
+            if Ω_step < tol:
+                break
+        else:
+            print("Warning: Maximum iterations reached in max_thrust_by_power without convergence.")
+            return [False, 0.0, 0.0]
+
+        return [True, max_thrust, best_Ω]
+    
+    
+
     def plot_effective_aoa_vs_r(self, Vy: float, Ω: float, altitude: float, divisions: int = ROTOR_DIVISIONS_01) -> Tuple[np.ndarray, np.ndarray]:
 
         assert self.parameters_set, "Rotor parameters not set. Please set them using 'set_rotor_parameters' method."
@@ -281,6 +341,8 @@ class Rotor:
         plt.grid()
         plt.legend()
         plt.show()
-        
+
+
+
 
 
