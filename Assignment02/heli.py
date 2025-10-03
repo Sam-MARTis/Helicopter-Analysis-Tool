@@ -366,6 +366,9 @@ class Fuselage:
         self.Cd0: Optional[float] = None
         self.f: Optional[float] = None
         self.rotor1_location: Optional[float] = None
+        self.rotor2_location: Optional[float] = None
+        
+    def get_drag_for_speed():
         
 
 class Helicopter:
