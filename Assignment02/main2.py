@@ -4,8 +4,10 @@ from time import sleep
 from numba import njit
 import matplotlib.pyplot as plt
 from numpy import sin, cos, tan, sqrt, atan2, atan
+from scipy.optimize import minimize
 
 deg_to_rad = np.pi / 180
+θ_epsilon = 0.001 * deg_to_rad
 
 θtw = 1 * deg_to_rad
 
@@ -262,29 +264,63 @@ class Rotor:
         return self.get_post_processed_results_average()
 
 
-    
-
 rotor1 = Rotor(rotor_mass=150, blade_count=4, R=5, rc=0.2, chord_function=lambda r: 0.3, θtw=θtw, ρ=1.225)
 
-rotor1.set_calculation_batch_properties(Thrust_Needed=10000, Ω=20, θ0=2*deg_to_rad, θ1s=-1*deg_to_rad, θ1c=-0.01*deg_to_rad)
+rotor1.set_calculation_batch_properties(Thrust_Needed=30000, Ω=20, θ0=3.515*deg_to_rad, θ1s=-4.42*deg_to_rad, θ1c=1.8*deg_to_rad)
 vals = rotor1.perform_all_calculations(W=2000, D=200, coning_angle_iterations=2, β0_step_fraction=1.00)
-# print()
-print("Key Parameters:")
-print(f"  Rotor radius: {rotor1.R} m")
-print(f"  Blade count: {rotor1.blade_count}")
-print(f"  Rotor speed: {rotor1.Ω} rad/s ({rotor1.Ω*60/(2*np.pi):.1f} RPM)")
-print(f"  Collective pitch (θ0): {rotor1.θ0/deg_to_rad:.1f}°")
-print(f"  Advance ratio (μ): {rotor1.mu:.3f}")
-print(f"  Thrust coefficient (Ct): {rotor1.Ct:.6f}")
-print()
-print("Results:")
-print("Coning angle: ", rotor1.β0 / deg_to_rad)
-print(f"Thrust: {vals[0]:.0f} N")
-print(f"Thrust needed: {rotor1.Thrust_Needed} N")
-print(f"Torque: {vals[1][1]:.0f} N⋅m") 
-print(f"Power: {vals[2]:.0f} W ({vals[2]/1000:.0f} kW)")
-print(f"Moments [x,y,z]: {vals[1]}")
+print(vals)
 
+
+def trimSolve(rotor:Rotor, Thrust_Needed, Ω, θ0_initial, θ1s_initial, θ1c_initial, W, D, coning_angle_iterations=2, β0_step_fraction=1.00, iterations=10, relaxation=0.8, θ0_ϵ = θ_epsilon, θ1s_ϵ = θ_epsilon, θ1c_ϵ = θ_epsilon):
+    θ0 = θ0_initial
+    θ1s = θ1s_initial
+    θ1c = θ1c_initial
+    for __ in range(2):
+        for _ in range(iterations//2):
+            rotor.set_calculation_batch_properties(Thrust_Needed=Thrust_Needed, Ω=Ω, θ0=θ0, θ1s=θ1s, θ1c=θ1c)
+            vals_current = rotor.perform_all_calculations(W=W, D=D, coning_angle_iterations=coning_angle_iterations, β0_step_fraction=β0_step_fraction)
+            rotor.set_calculation_batch_properties(Thrust_Needed=Thrust_Needed, Ω=Ω, θ0=θ0, θ1s=θ1s + θ1s_ϵ, θ1c=θ1c)
+            vals_perturbed_θ1s = rotor.perform_all_calculations(W=W, D=D, coning_angle_iterations=coning_angle_iterations, β0_step_fraction=β0_step_fraction)
+            partial_T_θ1s = (vals_perturbed_θ1s[0] - vals_current[0]) / θ1s_ϵ
+            partial_M_θ1s = (vals_perturbed_θ1s[1][2] - vals_current[1][2]) / θ1s_ϵ
+            rotor.set_calculation_batch_properties(Thrust_Needed=Thrust_Needed, Ω=Ω, θ0=θ0 + θ0_ϵ, θ1s=θ1s, θ1c=θ1c)
+            vals_perturbed_θ0 = rotor.perform_all_calculations(W=W, D=D, coning_angle_iterations=coning_angle_iterations, β0_step_fraction=β0_step_fraction)
+            
+            
+            partial_T_θ0 = (vals_perturbed_θ0[0] - vals_current[0]) / θ0_ϵ
+            partial_M_θ0 = (vals_perturbed_θ0[1][2] - vals_current[1][2]) / θ0_ϵ
+            
+            determinant = partial_T_θ0 * partial_M_θ1s - partial_T_θ1s * partial_M_θ0
+            if abs(determinant) < 1e-10:
+                print("Jacobian is singular, stopping iteration.")
+                break
+            ΔT = Thrust_Needed - vals_current[0]
+            ΔM = -vals_current[1][2] 
+            Δθ0 = ( -partial_M_θ0 * ΔT + partial_T_θ0 * ΔM) / determinant
+            Δθ1s = ( partial_M_θ1s * ΔT - partial_T_θ1s * ΔM) / determinant
+            θ0 += relaxation * Δθ0
+            θ1s += relaxation * Δθ1s
+
+        for _ in range(iterations//2):
+            rotor.set_calculation_batch_properties(Thrust_Needed=Thrust_Needed, Ω=Ω, θ0=θ0, θ1s=θ1s, θ1c=θ1c)
+            vals_current = rotor.perform_all_calculations(W=W, D=D, coning_angle_iterations=coning_angle_iterations, β0_step_fraction=β0_step_fraction)
+            rotor.set_calculation_batch_properties(Thrust_Needed=Thrust_Needed, Ω=Ω, θ0=θ0, θ1s=θ1s, θ1c=θ1c + θ1c_ϵ)
+            vals_perturbed_θ1c = rotor.perform_all_calculations(W=W, D=D, coning_angle_iterations=coning_angle_iterations, β0_step_fraction=β0_step_fraction)
+            partial_M_θ1c = (vals_perturbed_θ1c[1][0] - vals_current[1][0]) / θ1c_ϵ
+            if abs(partial_M_θ1c) < 1e-10:
+                print("Jacobian is singular, stopping iteration.")
+                break
+            ΔM = -vals_current[1][0]
+            
+            Δθ1c = ΔM / partial_M_θ1c
+            θ1c += relaxation * Δθ1c
+        
+    return θ0, θ1s, θ1c, vals_current
+
+
+        
+
+    
 
 
 
