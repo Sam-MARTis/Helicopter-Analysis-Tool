@@ -266,62 +266,118 @@ class Rotor:
 
 rotor1 = Rotor(rotor_mass=150, blade_count=4, R=5, rc=0.2, chord_function=lambda r: 0.3, θtw=θtw, ρ=1.225)
 
-rotor1.set_calculation_batch_properties(Thrust_Needed=30000, Ω=20, θ0=3.515*deg_to_rad, θ1s=-4.42*deg_to_rad, θ1c=1.8*deg_to_rad)
-vals = rotor1.perform_all_calculations(W=2000, D=200, coning_angle_iterations=2, β0_step_fraction=1.00)
-print(vals)
+# rotor1.set_calculation_batch_properties(Thrust_Needed=30000, Ω=20, θ0=3.515*deg_to_rad, θ1s=-4.42*deg_to_rad, θ1c=1.8*deg_to_rad)
+# vals = rotor1.perform_all_calculations(W=2000, D=200, coning_angle_iterations=2, β0_step_fraction=1.00)
+# print(vals)
 
 
-def trimSolve(rotor:Rotor, Thrust_Needed, Ω, θ0_initial, θ1s_initial, θ1c_initial, W, D, coning_angle_iterations=2, β0_step_fraction=1.00, iterations=10, relaxation=0.8, θ0_ϵ = θ_epsilon, θ1s_ϵ = θ_epsilon, θ1c_ϵ = θ_epsilon):
+def trimSolve(rotor:Rotor, Thrust_Needed, Ω, θ0_initial, θ1s_initial, θ1c_initial, W, D, coning_angle_iterations=2, β0_step_fraction=1.00, iterations=20, relaxation=0.3, θ0_ϵ = θ_epsilon, θ1s_ϵ = θ_epsilon, θ1c_ϵ = θ_epsilon, verbose=True):
+    """
+    Newton-Raphson trim solver using full 3x3 Jacobian matrix
+    """
     θ0 = θ0_initial
     θ1s = θ1s_initial
     θ1c = θ1c_initial
-    for __ in range(2):
-        for _ in range(iterations//2):
-            rotor.set_calculation_batch_properties(Thrust_Needed=Thrust_Needed, Ω=Ω, θ0=θ0, θ1s=θ1s, θ1c=θ1c)
-            vals_current = rotor.perform_all_calculations(W=W, D=D, coning_angle_iterations=coning_angle_iterations, β0_step_fraction=β0_step_fraction)
-            rotor.set_calculation_batch_properties(Thrust_Needed=Thrust_Needed, Ω=Ω, θ0=θ0, θ1s=θ1s + θ1s_ϵ, θ1c=θ1c)
-            vals_perturbed_θ1s = rotor.perform_all_calculations(W=W, D=D, coning_angle_iterations=coning_angle_iterations, β0_step_fraction=β0_step_fraction)
-            partial_T_θ1s = (vals_perturbed_θ1s[0] - vals_current[0]) / θ1s_ϵ
-            partial_M_θ1s = (vals_perturbed_θ1s[1][2] - vals_current[1][2]) / θ1s_ϵ
-            rotor.set_calculation_batch_properties(Thrust_Needed=Thrust_Needed, Ω=Ω, θ0=θ0 + θ0_ϵ, θ1s=θ1s, θ1c=θ1c)
-            vals_perturbed_θ0 = rotor.perform_all_calculations(W=W, D=D, coning_angle_iterations=coning_angle_iterations, β0_step_fraction=β0_step_fraction)
-            
-            
-            partial_T_θ0 = (vals_perturbed_θ0[0] - vals_current[0]) / θ0_ϵ
-            partial_M_θ0 = (vals_perturbed_θ0[1][2] - vals_current[1][2]) / θ0_ϵ
-            
-            determinant = partial_T_θ0 * partial_M_θ1s - partial_T_θ1s * partial_M_θ0
-            if abs(determinant) < 1e-10:
-                print("Jacobian is singular, stopping iteration.")
-                break
-            ΔT = Thrust_Needed - vals_current[0]
-            ΔM = -vals_current[1][2] 
-            Δθ0 = ( -partial_M_θ0 * ΔT + partial_T_θ0 * ΔM) / determinant
-            Δθ1s = ( partial_M_θ1s * ΔT - partial_T_θ1s * ΔM) / determinant
-            θ0 += relaxation * Δθ0
-            θ1s += relaxation * Δθ1s
-
-        for _ in range(iterations//2):
-            rotor.set_calculation_batch_properties(Thrust_Needed=Thrust_Needed, Ω=Ω, θ0=θ0, θ1s=θ1s, θ1c=θ1c)
-            vals_current = rotor.perform_all_calculations(W=W, D=D, coning_angle_iterations=coning_angle_iterations, β0_step_fraction=β0_step_fraction)
-            rotor.set_calculation_batch_properties(Thrust_Needed=Thrust_Needed, Ω=Ω, θ0=θ0, θ1s=θ1s, θ1c=θ1c + θ1c_ϵ)
-            vals_perturbed_θ1c = rotor.perform_all_calculations(W=W, D=D, coning_angle_iterations=coning_angle_iterations, β0_step_fraction=β0_step_fraction)
-            partial_M_θ1c = (vals_perturbed_θ1c[1][0] - vals_current[1][0]) / θ1c_ϵ
-            if abs(partial_M_θ1c) < 1e-10:
-                print("Jacobian is singular, stopping iteration.")
-                break
-            ΔM = -vals_current[1][0]
-            
-            Δθ1c = ΔM / partial_M_θ1c
-            θ1c += relaxation * Δθ1c
+    
+    # Convergence tolerances
+    thrust_tolerance = 100.0  # N
+    moment_tolerance = 500.0  # N⋅m
+    
+    if verbose:
+        print(f"Starting trim solve: Target Thrust = {Thrust_Needed} N")
+        print(f"Initial guess: θ0={θ0/deg_to_rad:.2f}°, θ1s={θ1s/deg_to_rad:.2f}°, θ1c={θ1c/deg_to_rad:.2f}°")
+    
+    for iteration in range(iterations):
+        rotor.set_calculation_batch_properties(Thrust_Needed=Thrust_Needed, Ω=Ω, θ0=θ0, θ1s=θ1s, θ1c=θ1c)
+        vals_current = rotor.perform_all_calculations(W=W, D=D, coning_angle_iterations=coning_angle_iterations, β0_step_fraction=β0_step_fraction)
         
-    return θ0, θ1s, θ1c, vals_current
+        T_current = vals_current[0]
+        Mx_current = vals_current[1][0]  
+        Mz_current = vals_current[1][2]  
 
+        residual_T = Thrust_Needed - T_current
+        residual_Mx = 0 - Mx_current  
+        residual_Mz = 0 - Mz_current  
+        
+        if (abs(residual_T) < thrust_tolerance and 
+            abs(residual_Mx) < moment_tolerance and 
+            abs(residual_Mz) < moment_tolerance):
+            if verbose:
+                print(f"Converged in {iteration+1} iterations!")
+            break
+        
+        if verbose and (iteration % 5 == 0 or iteration < 3):
+            print(f"Iter {iteration}: T={T_current:.0f}N (err:{residual_T:.0f}), Mx={Mx_current:.0f}N⋅m, Mz={Mz_current:.0f}N⋅m")
+        J = np.zeros((3, 3))
 
+        rotor.set_calculation_batch_properties(Thrust_Needed=Thrust_Needed, Ω=Ω, θ0=θ0 + θ0_ϵ, θ1s=θ1s, θ1c=θ1c)
+        vals_θ0 = rotor.perform_all_calculations(W=W, D=D, coning_angle_iterations=coning_angle_iterations, β0_step_fraction=β0_step_fraction)
+        J[0, 0] = (vals_θ0[0] - T_current) / θ0_ϵ      
+        J[1, 0] = (vals_θ0[1][0] - Mx_current) / θ0_ϵ   
+        J[2, 0] = (vals_θ0[1][2] - Mz_current) / θ0_ϵ   
         
 
+        rotor.set_calculation_batch_properties(Thrust_Needed=Thrust_Needed, Ω=Ω, θ0=θ0, θ1s=θ1s + θ1s_ϵ, θ1c=θ1c)
+        vals_θ1s = rotor.perform_all_calculations(W=W, D=D, coning_angle_iterations=coning_angle_iterations, β0_step_fraction=β0_step_fraction)
+        J[0, 1] = (vals_θ1s[0] - T_current) / θ1s_ϵ     
+        J[1, 1] = (vals_θ1s[1][0] - Mx_current) / θ1s_ϵ  
+        J[2, 1] = (vals_θ1s[1][2] - Mz_current) / θ1s_ϵ  
+        
+        
+        rotor.set_calculation_batch_properties(Thrust_Needed=Thrust_Needed, Ω=Ω, θ0=θ0, θ1s=θ1s, θ1c=θ1c + θ1c_ϵ)
+        vals_θ1c = rotor.perform_all_calculations(W=W, D=D, coning_angle_iterations=coning_angle_iterations, β0_step_fraction=β0_step_fraction)
+        J[0, 2] = (vals_θ1c[0] - T_current) / θ1c_ϵ     
+        J[1, 2] = (vals_θ1c[1][0] - Mx_current) / θ1c_ϵ  
+        J[2, 2] = (vals_θ1c[1][2] - Mz_current) / θ1c_ϵ  
+        
+     
+        det_J = np.linalg.det(J)
+        if abs(det_J) < 1e-10:
+            if verbose:
+                print(f"Jacobian is singular (det={det_J}).")
+            break
+        
+        
+        residuals = np.array([residual_T, residual_Mx, residual_Mz])
+        try:
+            Δθ = np.linalg.solve(J, residuals)
+        except np.linalg.LinAlgError:
+            if verbose:
+                print("Failed to solve Jacobian system, stopping iteration.")
+            break
+
+        θ0 += relaxation * Δθ[0]
+        θ1s += relaxation * Δθ[1]
+        θ1c += relaxation * Δθ[2]
+        
+        θ0 = np.clip(θ0, 0*deg_to_rad, 25*deg_to_rad)      
+        θ1s = np.clip(θ1s, -20*deg_to_rad, 20*deg_to_rad)   
+        θ1c = np.clip(θ1c, -20*deg_to_rad, 20*deg_to_rad)  
+        
+        if verbose and (iteration % 5 == 0 or iteration < 3):
+            print(f"  Δθ: [{Δθ[0]/deg_to_rad:.3f}°, {Δθ[1]/deg_to_rad:.3f}°, {Δθ[2]/deg_to_rad:.3f}°]")
+            print(f"  New θ: [{θ0/deg_to_rad:.3f}°, {θ1s/deg_to_rad:.3f}°, {θ1c/deg_to_rad:.3f}°]")
     
 
+    rotor.set_calculation_batch_properties(Thrust_Needed=Thrust_Needed, Ω=Ω, θ0=θ0, θ1s=θ1s, θ1c=θ1c)
+    vals_final = rotor.perform_all_calculations(W=W, D=D, coning_angle_iterations=coning_angle_iterations, β0_step_fraction=β0_step_fraction)
+    
+    if verbose:
+        print(f"\nFinal Results:")
+        print(f"Controls: θ0={θ0/deg_to_rad:.3f}°, θ1s={θ1s/deg_to_rad:.3f}°, θ1c={θ1c/deg_to_rad:.3f}°")
+        print(f"Thrust: {vals_final[0]:.0f} N (target: {Thrust_Needed} N, error: {vals_final[0]-Thrust_Needed:.0f} N)")
+        print(f"Moments: Mx={vals_final[1][0]:.0f} N⋅m, My={vals_final[1][1]:.0f} N⋅m, Mz={vals_final[1][2]:.0f} N⋅m")
+        print(f"Power: {vals_final[2]:.0f} W ({vals_final[2]/1000:.0f} kW)")
+    
+    return [θ0, θ1s, θ1c, vals_final]
+
+
+
+
+        
+
+vals_trim = trimSolve(rotor=rotor1, Thrust_Needed=30000, Ω=20, θ0_initial=5.015*deg_to_rad, θ1s_initial=-4.02*deg_to_rad, θ1c_initial=3*deg_to_rad, W=2000, D=200, coning_angle_iterations=2, β0_step_fraction=1.00, iterations=10, relaxation=0.8, verbose=False)
+print(vals_trim)
 
 
 """
@@ -331,6 +387,8 @@ def trimSolve(rotor:Rotor, Thrust_Needed, Ω, θ0_initial, θ1s_initial, θ1c_in
 T_tail -> My
 
 """
+
+
     
 
     
