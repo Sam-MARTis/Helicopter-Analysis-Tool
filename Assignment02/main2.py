@@ -21,32 +21,40 @@ def get_α_tpp(W, D):
 
 
 class Rotor:
-    def __init__(self, R, rc, θtw, chord_function):
+    def __init__(self, rotor_mass, blade_count, R, rc, chord_function, θtw, ρ, V_infty = 110, r_divisions = 20, ψ_divisions = 40, Cd0 = 0.0113, Cd_Clsq_slope = 1.25):
+        
+        # Supplied at instantiation
+        self.mass = rotor_mass
+        self.blade_count = blade_count
         self.R = R
-        self.mass = 40
-        self.blade_count = 4
         self.rc = rc
+        self.chord_function = chord_function
         self.θtw = θtw
         self.a = 5.75
-        self.chord_function = chord_function
-        self.rho = 1.225
+        self.ρ = ρ
+        self.Vinfty  = V_infty
+        self.r_divisions = r_divisions
+        self.ψ_divisions = ψ_divisions
+        self.Cd0 = Cd0
+        self.Cd_Clsq_slope = Cd_Clsq_slope
+
+
+        # Supplied before calculations. Can be varied between different calculation batches
+        self.Thrust_Needed = 0
+        self.Ω = 40
         self.θ0 = 10 * deg_to_rad
         self.θ1s = -5 * deg_to_rad
         self.θ1c = -0.01 * deg_to_rad
-        self.Thrust_Needed = 0
-        self.Ω = 40
-        self.Vinfty  = 110
+        
+        
+        # Calculated quantities
         self.α_tpp = 0
         self.mu = 0
         self.A = 0
         self.Ct = 0
         self.I = 0.6
-        self.r_divisions = 20
-        self.ψ_divisions = 40
         self.dr = (self.R - self.rc)/ self.r_divisions
         self.dψ = 2 * np.pi / self.ψ_divisions
-        self.Cd0 = 0.0113
-        self.Cd_Clsq_slope = 1.25
         
 
         # Quantities to store: v, α_effective, Up, Ut, dT, d_drag
@@ -57,6 +65,15 @@ class Rotor:
         self.dr = (self.R - self.rc)/ self.r_divisions
         self.dψ = 2 * np.pi / self.ψ_divisions
         self.mesh = np.zeros((self.r_divisions, self.ψ_divisions, 6))
+    
+    def set_calculation_batch_properties(self, Thrust_Needed, Ω, θ0, θ1s, θ1c):
+        self.Thrust_Needed = Thrust_Needed
+        self.Ω = Ω
+        self.θ0 = θ0
+        self.θ1s = θ1s
+        self.θ1c = θ1c
+        
+        
 
     def map_r_ψ_to_mesh_indices(self, r, ψ) -> Tuple[int, int]:
         if r < self.rc or r > self.R:
@@ -93,7 +110,7 @@ class Rotor:
         return I
 
     def get_Ct(self, set = True):
-        Ct = self.Thrust_Needed / (self.rho * self.A * (self.Ω * self.R) ** 2)
+        Ct = self.Thrust_Needed / (self.ρ * self.A * (self.Ω * self.R) ** 2)
         if set:
             self.Ct = Ct
         return Ct
@@ -154,7 +171,7 @@ class Rotor:
                 θ = self.get_effective_aoa(r, ψ)
                 Cl = self.a * θ
                 c = self.chord_function(r)
-                dS = 0.5 * self.rho * r*r * c * Cl * self.dr * self.dψ
+                dS = 0.5 * self.ρ * r*r * c * Cl * self.dr * self.dψ
                 internal_sum += dS
         β0 = internal_sum/(self.I * 2*np.pi)
         
@@ -210,8 +227,8 @@ class Rotor:
                 U_sq = Up*Up + Ut*Ut
                 Cl = self.a * θ
                 Cd = self.Cd0 + self.Cd_Clsq_slope * Cl * Cl
-                dL = 0.5 * self.rho * U_sq * c * Cl
-                dD = 0.5 * self.rho * U_sq * c * Cd
+                dL = 0.5 * self.ρ * U_sq * c * Cl
+                dD = 0.5 * self.ρ * U_sq * c * Cd
                 dT = (dL * cos(θ) - dD * sin(θ)) * self.β0
                 d_drag = dL * sin(θ) + dD * cos(θ)
                 self.mesh[i, j, 4] = dT * self.blade_count
@@ -242,10 +259,11 @@ class Rotor:
         self.calculate_primary_derived_quantities(W, D, coning_angle_iterations, β0_step_fraction)
         self.update_grid_secondary_derived_quantities()
         return self.get_post_processed_results_average()
-    
-    
+
 
     
+
+
     
 
     
