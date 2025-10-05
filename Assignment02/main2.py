@@ -215,6 +215,7 @@ class Rotor:
     def update_grid_secondary_derived_quantities(self):
         self.update_grid_induced_velocity()
         self.update_grid_effective_aoa_and_U_vels()
+        cosβ0 = cos(self.β0)
         # Quantities to store: v, α_effective, Up, Ut, dT, d_drag
         for i in range(self.r_divisions):
             for j in range(self.ψ_divisions):
@@ -229,7 +230,7 @@ class Rotor:
                 Cd = self.Cd0 + self.Cd_Clsq_slope * Cl * Cl
                 dL = 0.5 * self.ρ * U_sq * c * Cl
                 dD = 0.5 * self.ρ * U_sq * c * Cd
-                dT = (dL * cos(θ) - dD * sin(θ)) * self.β0
+                dT = (dL * cos(θ) - dD * sin(θ)) * cosβ0
                 d_drag = dL * sin(θ) + dD * cos(θ)
                 self.mesh[i, j, 4] = dT * self.blade_count
                 self.mesh[i, j, 5] = d_drag * self.blade_count
@@ -263,17 +264,14 @@ class Rotor:
 
     
 
+rotor1 = Rotor(rotor_mass=150, blade_count=4, R=5, rc=0.2, chord_function=lambda r: 0.3, θtw=θtw, ρ=1.225)
 
-    
+rotor1.set_calculation_batch_properties(Thrust_Needed=1000, Ω=20, θ0=10, θ1s=-5, θ1c=-0.01)
+vals = rotor1.perform_all_calculations(W=2000, D=200, coning_angle_iterations=5, β0_step_fraction=1.1)
+# print()
+print("Coning angle: ", rotor1.β0 / deg_to_rad)
+print(vals)
 
-    
-    
-    
-        
-                
-
-    
-    
     
     
     
@@ -281,52 +279,52 @@ class Rotor:
             
 
 
-def get_Area_Disc(R):
-    return np.pi * R * R
+# def get_Area_Disc(R):
+#     return np.pi * R * R
 
-def get_Ct(T, ρ, A, Ω, R):
-    return T / (ρ * A * (Ω * R) ** 2)
+# def get_Ct(T, ρ, A, Ω, R):
+#     return T / (ρ * A * (Ω * R) ** 2)
 
-def get_mu(Vinfty, α_tpp, Ω, R):
-    return Vinfty * cos(α_tpp) / (Ω * R)
+# def get_mu(Vinfty, α_tpp, Ω, R):
+#     return Vinfty * cos(α_tpp) / (Ω * R)
 
-# Now with Glaubert formulae
-def get_λi_Glaubert(Ct, mu):
-    assert mu >= 0.2
-    return Ct/(2*mu)
+# # Now with Glaubert formulae
+# def get_λi_Glaubert(Ct, mu):
+#     assert mu >= 0.2
+#     return Ct/(2*mu)
 
-def get_λG(λi, Vinfty, α_tpp, Ω, R):
-    return λi + (Vinfty * sin(α_tpp)) / (Ω * R)
+# def get_λG(λi, Vinfty, α_tpp, Ω, R):
+#     return λi + (Vinfty * sin(α_tpp)) / (Ω * R)
 
-def get_λi(r, ψ, λG, λi_Glaubert, mu, R):
-    num = (4/3) * (mu/λG) * r * cos(ψ)
-    den = (1.2 + (mu/λG))*R 
-    return λi_Glaubert*(1 + (num/den))
+# def get_λi(r, ψ, λG, λi_Glaubert, mu, R):
+#     num = (4/3) * (mu/λG) * r * cos(ψ)
+#     den = (1.2 + (mu/λG))*R 
+#     return λi_Glaubert*(1 + (num/den))
 
-def get_v_induced(λi, Ω, R):   
-    return λi * Ω * R
+# def get_v_induced(λi, Ω, R):   
+#     return λi * Ω * R
 
 
-def get_effective_aoa(θ1s, θ1c, θ0, θtw, r, ψ, v, Ω, Vinfty, α_tpp, β0):
-    dβ_by_dt = -α_tpp *(sin(ψ)*Ω)
-    Up = v + r*dβ_by_dt + Vinfty * sin(β0) * cos(ψ) + Vinfty * sin(α_tpp)
-    Ut = Ω * r + Vinfty * cos(α_tpp) * sin(ψ)
-    θ = θ1s * sin(ψ) + θ1c * cos(ψ) + θ0 + θtw * (r) - atan((Up) / (Ut))
-    return θ
+# def get_effective_aoa(θ1s, θ1c, θ0, θtw, r, ψ, v, Ω, Vinfty, α_tpp, β0):
+#     dβ_by_dt = -α_tpp *(sin(ψ)*Ω)
+#     Up = v + r*dβ_by_dt + Vinfty * sin(β0) * cos(ψ) + Vinfty * sin(α_tpp)
+#     Ut = Ω * r + Vinfty * cos(α_tpp) * sin(ψ)
+#     θ = θ1s * sin(ψ) + θ1c * cos(ψ) + θ0 + θtw * (r) - atan((Up) / (Ut))
+#     return θ
 
-def get_β0(Vinfty, chord_function, Ω, a, I, rc, R, ρ, divisions, β0_previous):
-    dx = (R - rc)/ divisions
-    for i in range(divisions):
-        r = rc + (i + 0.5) * dx
-        c = chord_function(r)
+# def get_β0(Vinfty, chord_function, Ω, a, I, rc, R, ρ, divisions, β0_previous):
+#     dx = (R - rc)/ divisions
+#     for i in range(divisions):
+#         r = rc + (i + 0.5) * dx
+#         c = chord_function(r)
 
     
     
 
-## ITERATION LOOP
-θ1s = -5 * deg_to_rad
-θ1c = -0.01 * deg_to_rad
-θ0 = 10 * deg_to_rad
+# ## ITERATION LOOP
+# θ1s = -5 * deg_to_rad
+# θ1c = -0.01 * deg_to_rad
+# θ0 = 10 * deg_to_rad
 
 
 
