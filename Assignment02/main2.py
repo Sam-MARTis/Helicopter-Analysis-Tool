@@ -20,6 +20,91 @@ def get_α_tpp(W, D):
 
 
 
+class Blade:
+    def __init__(self, R, rc, θtw, chord_function):
+        self.R = R
+        self.rc = rc
+        self.θtw = θtw
+        self.a = 5.75
+        self.chord_function = chord_function
+        self.rho = 1.225
+        self.θ0 = 10 * deg_to_rad
+        self.θ1s = -5 * deg_to_rad
+        self.θ1c = -0.01 * deg_to_rad
+        self.Thrust_Needed = 0
+        self.Ω = 40
+        self.Vinfty  = 110
+        self.α_tpp = 0
+        self.mu = 0
+        self.A = 0
+        self.Ct = 0
+        self.I = 0.6
+        self.divisions = 20
+    
+    # def set_properties
+        
+
+        # self.A = self.get_Area_Disc()
+        # self.Ct = self.get_Ct(self.Thrust_Needed, 1.225, 30*2*np.pi/60)
+    
+    def get_Area_Disc(self):
+        self.A = np.pi * self.R * self.R
+        return self.A
+
+    def get_Ct(self):
+        self.Ct = self.Thrust_Needed / (self.rho * self.A * (self.Ω * self.R) ** 2)
+        return self.Ct
+    
+    def get_α_tpp(self, W, D):
+        self.α_tpp = atan2(D, W)
+        return self.α_tpp
+    
+    def get_mu(self):
+        self.mu = self.Vinfty * cos(self.α_tpp) / (self.Ω * self.R)
+        return self.mu
+
+    def get_λi_Glaubert(self):
+        assert self.mu >= 0.2
+        self.λi_Glaubert = self.Ct/(2*self.mu)
+        return self.λi_Glaubert
+
+    def get_derived_properties(self):
+        self.A = self.get_Area_Disc()
+        self.Ct = self.get_Ct()
+        
+    def get_λG(self):
+        self.λG = self.λi_Glaubert + (self.Vinfty * sin(self.α_tpp)) / (self.Ω * self.R)
+        return self.λG
+    def get_v(self, r, ψ):
+        num = (4/3) * (self.mu/self.λG) * r * cos(ψ)
+        den = (1.2 + (self.mu/self.λG))*self.R 
+        λi = self.λi_Glaubert*(1 + (num/den))
+        return λi * self.Ω * self.R
+    
+    def get_effective_aoa(self, r, ψ):
+        v = self.get_v(r, ψ)
+        dβ_by_dt = -self.α_tpp *(sin(ψ)*self.Ω)
+        Up = v + r*dβ_by_dt + self.Vinfty * sin(self.β0) * cos(ψ) + self.Vinfty * sin(self.α_tpp)
+        Ut = self.Ω * r + self.Vinfty * cos(self.α_tpp) * sin(ψ)
+        θ = self.θ1s * sin(ψ) + self.θ1c * cos(ψ) + self.θ0 + self.θtw * (r) - atan((Up) / (Ut))
+        return θ
+    def get_β0(self, β0_previous = None):
+        β0_previous = self.β0 if β0_previous is None else β0_previous
+        dr = (self.R - self.rc)/ self.divisions
+        internal_sum = 0
+        for i in range(self.divisions):
+            r = self.rc + (i + 0.5) * dr
+            c = self.chord_function(r)
+            θ = self.get_effective_aoa(r, 0)
+            Cl = self.a * θ
+            dS = 0.5 * self.rho * r*r*r * Cl * dr
+            internal_sum += dS
+        # return internal_sum
+        # β0 = internal_sum/
+
+            
+
+
 def get_Area_Disc(R):
     return np.pi * R * R
 
