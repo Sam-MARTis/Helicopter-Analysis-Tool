@@ -23,6 +23,8 @@ def get_α_tpp(W, D):
 class Rotor:
     def __init__(self, R, rc, θtw, chord_function):
         self.R = R
+        self.mass = 40
+        self.blade_count = 4
         self.rc = rc
         self.θtw = θtw
         self.a = 5.75
@@ -78,14 +80,24 @@ class Rotor:
         ψ = (j + 0.5) * dψ
         
         return r, ψ
-    def get_Area_Disc(self):
-        self.A = np.pi * self.R * self.R
-        return self.A
+    def get_Area_Disc(self, set = True):
+        A = np.pi * self.R * self.R
+        if set:
+            self.A = A
+        return A
 
-    def get_Ct(self):
-        self.Ct = self.Thrust_Needed / (self.rho * self.A * (self.Ω * self.R) ** 2)
-        return self.Ct
-    
+    def get_I(self, set = True):
+        I = (1/3) * (self.mass/(self.R - self.rc)) * (np.power(self.R, 3) - np.power(self.rc, 3))
+        if set:
+            self.I = I
+        return I
+
+    def get_Ct(self, set = True):
+        Ct = self.Thrust_Needed / (self.rho * self.A * (self.Ω * self.R) ** 2)
+        if set:
+            self.Ct = Ct
+        return Ct
+
     def get_α_tpp(self, W, D, set = True):
         α_tpp = atan2(D, W)
         if set:
@@ -166,6 +178,7 @@ class Rotor:
 
     def calculate_primary_derived_quantities(self, W, D, coning_angle_iterations = 5, β0_step_fraction = 0.6):
         self.get_Area_Disc()
+        self.get_I()
         self.get_Ct()
         self.get_α_tpp(W, D)
         self.get_mu()
@@ -201,12 +214,12 @@ class Rotor:
                 dD = 0.5 * self.rho * U_sq * c * Cd
                 dT = (dL * cos(θ) - dD * sin(θ)) * self.β0
                 d_drag = dL * sin(θ) + dD * cos(θ)
-                self.mesh[i, j, 4] = dT
-                self.mesh[i, j, 5] = d_drag
-        
-    def get_post_processed_results(self):
+                self.mesh[i, j, 4] = dT * self.blade_count
+                self.mesh[i, j, 5] = d_drag * self.blade_count
+
+    def get_post_processed_results_average(self):
         thrust = 0
-        moment = [0, 0, 0] # x y z
+        moment = np.zeros(3) # x y z
         # x is right, y is up, z is back
         #FUTURE ME: READ THIS:
         # The tip path plane is used as referecne here, y direction is normal to tip path plane.
@@ -220,10 +233,23 @@ class Rotor:
                 moment[0] += dT * r * sin(ψ - np.pi/2) 
                 moment[1] +=  - d_drag * r
                 moment[2] += dT * r * sin(ψ)
+        moment = moment/(2 * np.pi)
         power = moment[1] * self.Ω
         return thrust, moment, power
     
-                
+    def perform_all_calculations(self, W, D, coning_angle_iterations = 5, β0_step_fraction = 0.6):
+        #Rememebrr to initialize rotor properties before calling this
+        self.calculate_primary_derived_quantities(W, D, coning_angle_iterations, β0_step_fraction)
+        self.update_grid_secondary_derived_quantities()
+        return self.get_post_processed_results_average()
+    
+    
+
+    
+    
+
+    
+    
     
         
                 
