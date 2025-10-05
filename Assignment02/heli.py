@@ -369,6 +369,7 @@ class Fuselage:
         self.rotor2_location: Optional[float] = None
         
     def get_drag_for_speed():
+        pass
         
 
 class Helicopter:
