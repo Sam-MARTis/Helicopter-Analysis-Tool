@@ -197,12 +197,35 @@ class Rotor:
                 U_sq = Up*Up + Ut*Ut
                 Cl = self.a * θ
                 Cd = self.Cd0 + self.Cd_Clsq_slope * Cl * Cl
-                dL = 0.5 * self.rho * U_sq * c * Cl * self.dr * self.dψ
-                dD = 0.5 * self.rho * U_sq * c * Cd * self.dr * self.dψ
+                dL = 0.5 * self.rho * U_sq * c * Cl
+                dD = 0.5 * self.rho * U_sq * c * Cd
                 dT = (dL * cos(θ) - dD * sin(θ)) * self.β0
                 d_drag = dL * sin(θ) + dD * cos(θ)
                 self.mesh[i, j, 4] = dT
                 self.mesh[i, j, 5] = d_drag
+        
+    def get_post_processed_results(self):
+        thrust = 0
+        moment = [0, 0, 0] # x y z
+        # x is right, y is up, z is back
+        #FUTURE ME: READ THIS:
+        # The tip path plane is used as referecne here, y direction is normal to tip path plane.
+        
+        for i in range(self.r_divisions):
+            for j in range(self.ψ_divisions):
+                r, ψ = self.map_mesh_indices_to_r_ψ(i, j)
+                dT = self.mesh[i, j, 4] * self.dr * self.dψ
+                d_drag = self.mesh[i, j, 5] * self.dr * self.dψ
+                thrust += dT
+                moment[0] += dT * r * sin(ψ - np.pi/2) 
+                moment[1] +=  - d_drag * r
+                moment[2] += dT * r * sin(ψ)
+        power = moment[1] * self.Ω
+        return thrust, moment, power
+    
+                
+    
+        
                 
 
     
