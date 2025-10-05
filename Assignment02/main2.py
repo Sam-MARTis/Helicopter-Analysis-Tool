@@ -21,7 +21,7 @@ def get_α_tpp(W, D):
 
 
 class Rotor:
-    def __init__(self, rotor_mass, blade_count, R, rc, chord_function, θtw, ρ, V_infty = 110, r_divisions = 20, ψ_divisions = 40, Cd0 = 0.0113, Cd_Clsq_slope = 1.25):
+    def __init__(self, rotor_mass, blade_count, R, rc, chord_function, θtw, ρ, V_infty = 110, r_divisions = 20, ψ_divisions = 40, Cd0 = 0.0113, Cd_Clsq_slope = 0.037):
         
         # Supplied at instantiation
         self.mass = rotor_mass
@@ -104,7 +104,7 @@ class Rotor:
         return A
 
     def get_I(self, set = True):
-        I = (1/3) * (self.mass/(self.R - self.rc)) * (np.power(self.R, 3) - np.power(self.rc, 3))
+        I = (1/3) * ((self.mass/self.blade_count)/(self.R - self.rc)) * (np.power(self.R, 3) - np.power(self.rc, 3))
         if set:
             self.I = I
         return I
@@ -249,7 +249,7 @@ class Rotor:
                 d_drag = self.mesh[i, j, 5] * self.dr * self.dψ
                 thrust += dT
                 moment[0] += dT * r * sin(ψ - np.pi/2) 
-                moment[1] +=  - d_drag * r
+                moment[1] += d_drag * r
                 moment[2] += dT * r * sin(ψ)
         moment = moment/(2 * np.pi)
         power = moment[1] * self.Ω
@@ -266,11 +266,30 @@ class Rotor:
 
 rotor1 = Rotor(rotor_mass=150, blade_count=4, R=5, rc=0.2, chord_function=lambda r: 0.3, θtw=θtw, ρ=1.225)
 
-rotor1.set_calculation_batch_properties(Thrust_Needed=1000, Ω=20, θ0=10, θ1s=-5, θ1c=-0.01)
-vals = rotor1.perform_all_calculations(W=2000, D=200, coning_angle_iterations=5, β0_step_fraction=1.1)
+rotor1.set_calculation_batch_properties(Thrust_Needed=10000, Ω=20, θ0=2*deg_to_rad, θ1s=-1*deg_to_rad, θ1c=-0.01*deg_to_rad)
+vals = rotor1.perform_all_calculations(W=2000, D=200, coning_angle_iterations=2, β0_step_fraction=1.00)
 # print()
+print("Key Parameters:")
+print(f"  Rotor radius: {rotor1.R} m")
+print(f"  Blade count: {rotor1.blade_count}")
+print(f"  Rotor speed: {rotor1.Ω} rad/s ({rotor1.Ω*60/(2*np.pi):.1f} RPM)")
+print(f"  Collective pitch (θ0): {rotor1.θ0/deg_to_rad:.1f}°")
+print(f"  Advance ratio (μ): {rotor1.mu:.3f}")
+print(f"  Thrust coefficient (Ct): {rotor1.Ct:.6f}")
+print()
+print("Results:")
 print("Coning angle: ", rotor1.β0 / deg_to_rad)
-print(vals)
+print(f"Thrust: {vals[0]:.0f} N")
+print(f"Thrust needed: {rotor1.Thrust_Needed} N")
+print(f"Torque: {vals[1][1]:.0f} N⋅m") 
+print(f"Power: {vals[2]:.0f} W ({vals[2]/1000:.0f} kW)")
+print(f"Moments [x,y,z]: {vals[1]}")
+
+
+
+
+
+# print(vals)
 
     
     
