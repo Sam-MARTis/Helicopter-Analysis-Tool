@@ -20,7 +20,7 @@ def get_α_tpp(W, D):
 
 
 
-class Blade:
+class Rotor:
     def __init__(self, R, rc, θtw, chord_function):
         self.R = R
         self.rc = rc
@@ -43,16 +43,18 @@ class Blade:
         self.ψ_divisions = 40
         self.dr = (self.R - self.rc)/ self.r_divisions
         self.dψ = 2 * np.pi / self.ψ_divisions
+        self.Cd0 = 0.0113
+        self.Cd_Clsq_slope = 1.25
         
 
-        # Quantities to store: v, α_effective, Up, dT, dL, dD, dTorque, 
-        self.mesh = np.zeros((self.r_divisions, self.ψ_divisions, 7))
+        # Quantities to store: v, α_effective, Up, Ut, dT, d_drag
+        self.mesh = np.zeros((self.r_divisions, self.ψ_divisions, 6))
     def set_mesh(self, r_divisions, ψ_divisions):
         self.r_divisions = r_divisions
         self.ψ_divisions = ψ_divisions
         self.dr = (self.R - self.rc)/ self.r_divisions
         self.dψ = 2 * np.pi / self.ψ_divisions
-        self.mesh = np.zeros((self.r_divisions, self.ψ_divisions, 7))
+        self.mesh = np.zeros((self.r_divisions, self.ψ_divisions, 6))
 
     def map_r_ψ_to_mesh_indices(self, r, ψ) -> Tuple[int, int]:
         if r < self.rc or r > self.R:
@@ -162,7 +164,7 @@ class Blade:
                 θ = self.get_effective_aoa(r, ψ)
                 self.mesh[i, j, 1] = θ
 
-    def calculate_primary_derived_quantities(self, W, D, coning_angle_iterations = 5, step_fraction = 0.6):
+    def calculate_primary_derived_quantities(self, W, D, coning_angle_iterations = 5, β0_step_fraction = 0.6):
         self.get_Area_Disc()
         self.get_Ct()
         self.get_α_tpp(W, D)
@@ -177,11 +179,32 @@ class Blade:
             
             β0 = self.get_β0()
             dβ0 = β0 - self.β0
-            self.β0 = self.β0 + step_fraction * dβ0
+            self.β0 = self.β0 + β0_step_fraction * dβ0
             self.update_grid_effective_aoa_and_U_vels()
-        
-        
-        
+            
+    def update_grid_secondary_derived_quantities(self):
+        self.update_grid_induced_velocity()
+        self.update_grid_effective_aoa_and_U_vels()
+        # Quantities to store: v, α_effective, Up, Ut, dT, d_drag
+        for i in range(self.r_divisions):
+            for j in range(self.ψ_divisions):
+                v = self.mesh[i, j, 0]
+                θ = self.mesh[i, j, 1]
+                r, ψ = self.map_mesh_indices_to_r_ψ(i, j)
+                c = self.chord_function(r)
+                Up = self.mesh[i, j, 2]
+                Ut = self.mesh[i, j, 3]
+                U_sq = Up*Up + Ut*Ut
+                Cl = self.a * θ
+                Cd = self.Cd0 + self.Cd_Clsq_slope * Cl * Cl
+                dL = 0.5 * self.rho * U_sq * c * Cl * self.dr * self.dψ
+                dD = 0.5 * self.rho * U_sq * c * Cd * self.dr * self.dψ
+                dT = (dL * cos(θ) - dD * sin(θ)) * self.β0
+                d_drag = dL * sin(θ) + dD * cos(θ)
+                self.mesh[i, j, 4] = dT
+                self.mesh[i, j, 5] = d_drag
+                
+
     
     
     
