@@ -901,8 +901,8 @@ class MissionPlanner:
         self.dry_weight += self.reserved_fuel
         # self.min_fuel = self.fuel_weight * reserve_fuel_fraction
         self.max_fuel = self.fuel_weight + self.reserved_fuel
-        
-        
+
+    
     # def set_flight_path(self):
     #     if not self.flight_parameters_set:
     #         print("Flight parameters not set. Please set them first.")

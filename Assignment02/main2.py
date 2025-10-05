@@ -8,7 +8,8 @@ from scipy.optimize import minimize
 
 deg_to_rad = np.pi / 180
 θ_epsilon = 0.001 * deg_to_rad
-
+thrust_tolerance = 100.0 
+moment_tolerance = 200.0 
 θtw = 1 * deg_to_rad
 
 def get_Parasitic_Drag(ρ, f, Vinfty):
@@ -279,9 +280,7 @@ def trimSolve(rotor:Rotor, Thrust_Needed, Ω, θ0_initial, θ1s_initial, θ1c_in
     θ1s = θ1s_initial
     θ1c = θ1c_initial
     
-    # Convergence tolerances
-    thrust_tolerance = 100.0  # N
-    moment_tolerance = 500.0  # N⋅m
+
     
     if verbose:
         print(f"Starting trim solve: Target Thrust = {Thrust_Needed} N")
@@ -369,15 +368,16 @@ def trimSolve(rotor:Rotor, Thrust_Needed, Ω, θ0_initial, θ1s_initial, θ1c_in
         print(f"Moments: Mx={vals_final[1][0]:.0f} N⋅m, My={vals_final[1][1]:.0f} N⋅m, Mz={vals_final[1][2]:.0f} N⋅m")
         print(f"Power: {vals_final[2]:.0f} W ({vals_final[2]/1000:.0f} kW)")
     
-    return [θ0, θ1s, θ1c, vals_final]
+    return np.array([θ0, θ1s, θ1c]), vals_final
 
 
 
 
         
 
-vals_trim = trimSolve(rotor=rotor1, Thrust_Needed=30000, Ω=20, θ0_initial=5.015*deg_to_rad, θ1s_initial=-4.02*deg_to_rad, θ1c_initial=3*deg_to_rad, W=2000, D=200, coning_angle_iterations=2, β0_step_fraction=1.00, iterations=10, relaxation=0.8, verbose=False)
-print(vals_trim)
+trim_vals, state_vals = trimSolve(rotor=rotor1, Thrust_Needed=30000, Ω=20, θ0_initial=5.015*deg_to_rad, θ1s_initial=-4.02*deg_to_rad, θ1c_initial=3*deg_to_rad, W=2000, D=200, coning_angle_iterations=2, β0_step_fraction=1.00, iterations=10, relaxation=0.8, verbose=False)
+print(trim_vals * (180/np.pi))
+print(state_vals)
 
 
 """
@@ -388,8 +388,40 @@ T_tail -> My
 
 """
 
+        
+            
+            
+        
+        
+        
+        
+            
+        
+    # def set_flight_parameters(self):
+    #     self.flight_parameters_set = True
+    #     self.dry_weight = float(input("Enter the dry weight of the helicopter in kg: "))
+    #     self.fuel_weight = float(input("Enter the fuel weight of the helicopter in kg: "))
+    #     self.fuel_specific_energy = 1000*float(input("Enter the fuel specific energy in kJ/kg: "))
+    #     reserve_fuel_fraction  = float(input("Enter the reserve fuel fraction (e.g., 0.2 for 20%): "))
+    #     self.reserved_fuel = self.fuel_weight * reserve_fuel_fraction
+    #     self.fuel_weight -= self.reserved_fuel
+    #     self.dry_weight += self.reserved_fuel
+    #     # self.min_fuel = self.fuel_weight * reserve_fuel_fraction
+    #     self.max_fuel = self.fuel_weight + self.reserved_fuel
 
-    
+    # def set_flight_parameters_programmatic(self, dry_weight: float, fuel_weight: float, 
+    #                                       fuel_specific_energy_kj_kg: float, reserve_fuel_fraction: float):
+    #     """Set flight parameters programmatically for testing"""
+    #     self.flight_parameters_set = True
+    #     self.dry_weight = dry_weight
+    #     self.fuel_weight = fuel_weight
+    #     self.fuel_specific_energy = 1000 * fuel_specific_energy_kj_kg  # Convert kJ/kg to J/kg
+    #     self.reserved_fuel = self.fuel_weight * reserve_fuel_fraction
+    #     self.fuel_weight -= self.reserved_fuel
+    #     self.dry_weight += self.reserved_fuel
+    #     # self.min_fuel = self.fuel_weight * reserve_fuel_fraction
+    #     self.max_fuel = self.fuel_weight + self.reserved_fuel
+
 
     
     
