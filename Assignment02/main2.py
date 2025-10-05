@@ -5,7 +5,12 @@ from numba import njit
 import matplotlib.pyplot as plt
 from numpy import sin, cos, tan, sqrt, atan2, atan
 from scipy.optimize import minimize
+import multiprocessing as mp
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+import copy
+import pickle
 
+MAX_CPU_WORKERS = 18
 deg_to_rad = np.pi / 180
 θ_epsilon = 0.001 * deg_to_rad
 thrust_tolerance = 100.0 
@@ -375,9 +380,9 @@ def trimSolve(rotor:Rotor, Thrust_Needed, Ω, θ0_initial, θ1s_initial, θ1c_in
 
         
 
-trim_vals, state_vals = trimSolve(rotor=rotor1, Thrust_Needed=30000, Ω=20, θ0_initial=5.015*deg_to_rad, θ1s_initial=-4.02*deg_to_rad, θ1c_initial=3*deg_to_rad, W=2000, D=200, coning_angle_iterations=2, β0_step_fraction=1.00, iterations=10, relaxation=0.8, verbose=False)
-print(trim_vals * (180/np.pi))
-print(state_vals)
+# trim_vals, state_vals = trimSolve(rotor=rotor1, Thrust_Needed=30000, Ω=20, θ0_initial=5.015*deg_to_rad, θ1s_initial=-4.02*deg_to_rad, θ1c_initial=3*deg_to_rad, W=2000, D=200, coning_angle_iterations=2, β0_step_fraction=1.00, iterations=10, relaxation=0.8, verbose=False)
+# print(trim_vals * (180/np.pi))
+# print(state_vals)
 
 
 """
@@ -390,20 +395,143 @@ T_tail -> My
 
 g = 9.81
 
+def _calculate_speed_performance(args):
+    """Helper function for multiprocessing speed calculations"""
+    V, weight, mp_params = args
+    
+    # Recreate rotor instance
+    rotor = Rotor(
+        rotor_mass=mp_params['rotor_mass'], 
+        blade_count=mp_params['blade_count'], 
+        R=mp_params['R'], 
+        rc=mp_params['rc'], 
+        chord_function=lambda r: 0.5, 
+        θtw=mp_params['θtw'], 
+        ρ=mp_params['ρ']
+    )
+    
+    # Recreate mission planner instance
+    mp_instance = MissionPlanner(
+        rotor=rotor,
+        Ω=mp_params['Ω'],
+        f=mp_params['f'],
+        fuelweight=mp_params['fuelweight'], 
+        dryweight=mp_params['dryweight'],
+        fuel_specific_energy=mp_params['fuel_specific_energy'],
+        fuel_reserve_fraction=mp_params['fuel_reserve_fraction']
+    )
+    
+    try:
+        D = get_Parasitic_Drag(ρ=mp_instance.ρ, f=mp_instance.f, Vinfty=V)
+        T_Needed = get_Thrust_Total(W=weight*g, D=D)
+        
+        _, trim_state_vals = trimSolve(
+            rotor=mp_instance.rotor, 
+            Thrust_Needed=T_Needed, 
+            Ω=20, 
+            θ0_initial=5.015*deg_to_rad, 
+            θ1s_initial=-4.02*deg_to_rad, 
+            θ1c_initial=3*deg_to_rad, 
+            W=weight*g, 
+            D=D, 
+            coning_angle_iterations=2, 
+            β0_step_fraction=1.00, 
+            iterations=10, 
+            relaxation=0.3, 
+            verbose=False
+        )
+        
+        trim_power = trim_state_vals[2]
+        if trim_power > 0:
+            return V, trim_power, V/trim_power  # speed, power, efficiency
+        else:
+            return V, None, None
+            
+    except Exception as e:
+        return V, None, None
+
+def _calculate_endurance_performance(args):
+    """Helper function for multiprocessing endurance calculations"""
+    V, weight, mp_params = args
+    
+    # Recreate rotor instance
+    rotor = Rotor(
+        rotor_mass=mp_params['rotor_mass'], 
+        blade_count=mp_params['blade_count'], 
+        R=mp_params['R'], 
+        rc=mp_params['rc'], 
+        chord_function=lambda r: 0.5, 
+        θtw=mp_params['θtw'], 
+        ρ=mp_params['ρ']
+    )
+    
+    # Recreate mission planner instance
+    mp_instance = MissionPlanner(
+        rotor=rotor,
+        Ω=mp_params['Ω'],
+        f=mp_params['f'],
+        fuelweight=mp_params['fuelweight'], 
+        dryweight=mp_params['dryweight'],
+        fuel_specific_energy=mp_params['fuel_specific_energy'],
+        fuel_reserve_fraction=mp_params['fuel_reserve_fraction']
+    )
+    
+    try:
+        D = get_Parasitic_Drag(ρ=mp_instance.ρ, f=mp_instance.f, Vinfty=V)
+        T_Needed = get_Thrust_Total(W=weight*g, D=D)
+        
+        _, trim_state_vals = trimSolve(
+            rotor=mp_instance.rotor, 
+            Thrust_Needed=T_Needed, 
+            Ω=20, 
+            θ0_initial=5.015*deg_to_rad, 
+            θ1s_initial=-4.02*deg_to_rad, 
+            θ1c_initial=3*deg_to_rad, 
+            W=weight*g, 
+            D=D, 
+            coning_angle_iterations=2, 
+            β0_step_fraction=1.00, 
+            iterations=10, 
+            relaxation=0.3, 
+            verbose=False
+        )
+        
+        trim_power = trim_state_vals[2]
+        if trim_power > 0:
+            return V, trim_power
+        else:
+            return V, None
+            
+    except Exception as e:
+        return V, None
+
 
 class MissionPlanner:
-    def __init__(self, f, fuelweight, dryweight, fuel_specific_energy, fuel_reserve_fraction = 0.2):
+    def __init__(self, rotor, Ω, f, fuelweight, dryweight, fuel_specific_energy, fuel_reserve_fraction = 0.2):
         self.ρ = 1.225 
         self.f = f
         self.fuelweight = fuelweight
         self.dryweight = dryweight
         self.fuel_specific_energy = fuel_specific_energy  # in J/kg
         self.fuel_reserve_fraction = fuel_reserve_fraction
-        self.rotor = Rotor(rotor_mass=150, blade_count=4, R=5, rc=0.2, chord_function=lambda r: 0.3, θtw=θtw, ρ=self.ρ) 
+        self.rotor = rotor
+        self.Ω = Ω
         
+    def copy(self):
+        """Create a deep copy of the MissionPlanner instance for multiprocessing"""
+        new_mp = MissionPlanner(
+            f=self.f,
+            fuelweight=self.fuelweight,
+            dryweight=self.dryweight,
+            fuel_specific_energy=self.fuel_specific_energy,
+            fuel_reserve_fraction=self.fuel_reserve_fraction
+        )
+        # Copy rotor parameters
+        new_mp.ρ = self.ρ
+        return new_mp
         
 
-    def get_max_range_speed(self, weight, dV = 30, V_start = 10, V_end = 200) -> Tuple[float, float]:
+    def get_max_range_speed(self, weight, dV = 10, V_start = 10, V_end = 150) -> Tuple[float, float]:
         best_v_by_power = 0
         best_speed = V_start
         V_by_power = {}
@@ -411,9 +539,14 @@ class MissionPlanner:
             D = get_Parasitic_Drag(ρ=self.ρ, f=self.f, Vinfty=V)
             T_Needed = get_Thrust_Total(W=weight*g, D=D)
             # self.rotor.set_calculation_batch_properties(Thrust_Needed=T_Needed, Ω=20, θ0=5.015*deg_to_rad, θ1s=-4.02*deg_to_rad, θ1c=3*deg_to_rad)
-            _, trim_state_vals = trimSolve(rotor=self.rotor, Thrust_Needed=T_Needed, Ω=20, θ0_initial=5.015*deg_to_rad, θ1s_initial=-4.02*deg_to_rad, θ1c_initial=3*deg_to_rad, W=self.dryweight, D=D, coning_angle_iterations=2, β0_step_fraction=1.00, iterations=10, relaxation=0.8, verbose=False)
-            trim_power = trim_state_vals[2]
-            V_by_power[V] = V/trim_power
+            try:
+                _, trim_state_vals = trimSolve(rotor=self.rotor, Thrust_Needed=T_Needed, Ω=self.Ω, θ0_initial=5.015*deg_to_rad, θ1s_initial=-4.02*deg_to_rad, θ1c_initial=3*deg_to_rad, W=weight*g, D=D, coning_angle_iterations=2, β0_step_fraction=1.00, iterations=10, relaxation=0.3, verbose=False)
+                trim_power = trim_state_vals[2]
+                if trim_power > 0:  # Only consider positive power
+                    V_by_power[V] = V/trim_power
+            except Exception as e:
+                print(f"Warning: Trim solve failed at V={V} m/s: {e}")
+                continue
         
         # Return the best V
         for V, val in V_by_power.items():
@@ -427,14 +560,38 @@ class MissionPlanner:
         weight = self.dryweight + self.fuelweight
         total_distance = 0
         time_elapsed = 0
-        while fuel_weight_available > 0:
-            best_speed, best_v_by_power = self.get_max_range_speed(weight=weight, dV=dV, V_start=V_start, V_end=V_end)
-            power_consumed = best_speed / best_v_by_power
-            fuel_consumed = power_consumed * dt / self.fuel_specific_energy
-            total_distance += best_speed * dt
-            fuel_weight_available -= fuel_consumed
-            weight -= fuel_consumed
-            time_elapsed += dt
+        iteration = 0
+        max_iterations = int(fuel_weight_available * self.fuel_specific_energy / (50000 * dt)) + 100  # Safety limit
+        
+        while fuel_weight_available > 0 and iteration < max_iterations:
+            print(f"Iteration {iteration}: Weight={weight:.1f} kg, Fuel left={fuel_weight_available:.1f} kg, Distance={total_distance/1000:.2f} km, Time={time_elapsed/3600:.2f} hr")
+            try:
+                best_speed, best_v_by_power = self.get_max_range_speed(weight=weight, dV=dV, V_start=V_start, V_end=V_end)
+                
+                if best_v_by_power <= 0:
+                    print("Warning: Invalid efficiency in range calculation")
+                    break
+                    
+                power_consumed = best_speed / best_v_by_power
+                fuel_consumed = power_consumed * dt / self.fuel_specific_energy
+                
+                # Don't consume more fuel than available
+                if fuel_consumed > fuel_weight_available:
+                    # Calculate partial time step
+                    partial_dt = fuel_weight_available * self.fuel_specific_energy / power_consumed
+                    total_distance += best_speed * partial_dt
+                    time_elapsed += partial_dt
+                    break
+                
+                total_distance += best_speed * dt
+                fuel_weight_available -= fuel_consumed
+                weight -= fuel_consumed
+                time_elapsed += dt
+                iteration += 1
+                
+            except Exception as e:
+                print(f"Error in range calculation at iteration {iteration}: {e}")
+                break
         
         return total_distance, time_elapsed
     
@@ -446,63 +603,282 @@ class MissionPlanner:
             D = get_Parasitic_Drag(ρ=self.ρ, f=self.f, Vinfty=V)
             T_Needed = get_Thrust_Total(W=weight*g, D=D)
             # self.rotor.set_calculation_batch_properties(Thrust_Needed=T_Needed, Ω=20, θ0=5.015*deg_to_rad, θ1s=-4.02*deg_to_rad, θ1c=3*deg_to_rad)
-            _, trim_state_vals = trimSolve(rotor=self.rotor, Thrust_Needed=T_Needed, Ω=20, θ0_initial=5.015*deg_to_rad, θ1s_initial=-4.02*deg_to_rad, θ1c_initial=3*deg_to_rad, W=self.dryweight, D=D, coning_angle_iterations=2, β0_step_fraction=1.00, iterations=10, relaxation=0.8, verbose=False)
-            trim_power = trim_state_vals[2]
-            V_power[V] = trim_power
-            if trim_power < least_power:
-                least_power = trim_power
-                best_speed = V
+            try:
+                _, trim_state_vals = trimSolve(rotor=self.rotor, Thrust_Needed=T_Needed, Ω=self.Ω, θ0_initial=5.015*deg_to_rad, θ1s_initial=-4.02*deg_to_rad, θ1c_initial=3*deg_to_rad, W=weight*g, D=D, coning_angle_iterations=2, β0_step_fraction=1.00, iterations=10, relaxation=0.3, verbose=False)
+                trim_power = trim_state_vals[2]
+                if trim_power > 0:  # Only consider positive power
+                    V_power[V] = trim_power
+                    if trim_power < least_power:
+                        least_power = trim_power
+                        best_speed = V
+            except Exception as e:
+                print(f"Warning: Trim solve failed at V={V} m/s: {e}")
+                continue
         return best_speed, least_power
     
     def get_endurance(self, dV, V_start, V_end, dt=600):
         fuel_weight_available = self.fuelweight*(1 - self.fuel_reserve_fraction)
         weight = self.dryweight + self.fuelweight
         total_time = 0
-        while fuel_weight_available > 0:
-            best_speed, least_power = self.get_max_endurance_speed(weight=weight, dV=dV, V_start=V_start, V_end=V_end)
-            fuel_consumed = least_power * dt / self.fuel_specific_energy
-            total_time += dt
-            fuel_weight_available -= fuel_consumed
-            weight -= fuel_consumed
+        iteration = 0
+        max_iterations = int(fuel_weight_available * self.fuel_specific_energy / (50000 * dt)) + 100  # Safety limit
+        
+        while fuel_weight_available > 0 and iteration < max_iterations:
+            print(f"Iteration {iteration}: Weight={weight:.1f} kg, Fuel left={fuel_weight_available:.1f} kg, Time={total_time/3600:.2f} hr")
+            try:
+                best_speed, least_power = self.get_max_endurance_speed(weight=weight, dV=dV, V_start=V_start, V_end=V_end)
+                
+                if least_power <= 0:
+                    print("Warning: Invalid power in endurance calculation")
+                    break
+                    
+                fuel_consumed = least_power * dt / self.fuel_specific_energy
+                
+                # Don't consume more fuel than available
+                if fuel_consumed > fuel_weight_available:
+                    # Calculate partial time step
+                    partial_dt = fuel_weight_available * self.fuel_specific_energy / least_power
+                    total_time += partial_dt
+                    break
+                
+                total_time += dt
+                fuel_weight_available -= fuel_consumed
+                weight -= fuel_consumed
+                iteration += 1
+                
+            except Exception as e:
+                print(f"Error in endurance calculation at iteration {iteration}: {e}")
+                break
         
         return total_time
     
-    
-    
+    def get_max_range_speed_mt(self, weight, dV=30, V_start=10, V_end=150, num_workers=None) -> Tuple[float, float]:
+        """Multithreaded version of get_max_range_speed for better performance"""
+        if num_workers is None:
+            num_workers = min(mp.cpu_count(), MAX_CPU_WORKERS)  # Limit to 18 workers max
+
+        # Prepare parameters for multiprocessing
+        mp_params = {
+            'rotor_mass': self.rotor.mass,
+            'blade_count': self.rotor.blade_count,
+            'R': self.rotor.R,
+            'rc': self.rotor.rc,
+            'θtw': self.rotor.θtw,
+            'ρ': self.rotor.ρ,
+            'Ω': self.Ω,
+            'f': self.f,
+            'fuelweight': self.fuelweight,
+            'dryweight': self.dryweight,
+            'fuel_specific_energy': self.fuel_specific_energy,
+            'fuel_reserve_fraction': self.fuel_reserve_fraction
+        }
         
+        # Create speed points to test
+        speeds = list(np.arange(V_start, V_end, dV))
+        args_list = [(V, weight, mp_params) for V in speeds]
+        
+        best_v_by_power = 0
+        best_speed = V_start
+        
+        # Use ProcessPoolExecutor for CPU-bound tasks
+        with ProcessPoolExecutor(max_workers=num_workers) as executor:
+            results = list(executor.map(_calculate_speed_performance, args_list))
+        
+        # Process results
+        for V, power, efficiency in results:
+            if efficiency is not None and efficiency > best_v_by_power:
+                best_v_by_power = efficiency
+                best_speed = V
+        
+        return best_speed, best_v_by_power
+    
+    def get_max_endurance_speed_mt(self, weight, dV=5, V_start=10, V_end=50, num_workers=None) -> Tuple[float, float]:
+        """Multithreaded version of get_max_endurance_speed for better performance"""
+        if num_workers is None:
+            num_workers = min(mp.cpu_count(), MAX_CPU_WORKERS)  # Limit to 18 workers max
+
+        # Prepare parameters for multiprocessing
+        mp_params = {
+            'rotor_mass': self.rotor.mass,
+            'blade_count': self.rotor.blade_count,
+            'R': self.rotor.R,
+            'rc': self.rotor.rc,
+            'θtw': self.rotor.θtw,
+            'ρ': self.rotor.ρ,
+            'Ω': self.Ω,
+            'f': self.f,
+            'fuelweight': self.fuelweight,
+            'dryweight': self.dryweight,
+            'fuel_specific_energy': self.fuel_specific_energy,
+            'fuel_reserve_fraction': self.fuel_reserve_fraction
+        }
+        
+        # Create speed points to test
+        speeds = list(np.arange(V_start, V_end, dV))
+        args_list = [(V, weight, mp_params) for V in speeds]
+        
+        least_power = float('inf')
+        best_speed = V_start
+        
+        # Use ProcessPoolExecutor for CPU-bound tasks
+        with ProcessPoolExecutor(max_workers=num_workers) as executor:
+            results = list(executor.map(_calculate_endurance_performance, args_list))
+        
+        # Process results
+        for V, power in results:
+            if power is not None and power < least_power:
+                least_power = power
+                best_speed = V
+        
+        return best_speed, least_power
+    
+    def get_max_range_mt(self, dV, V_start, V_end, dt=600, num_workers=None):
+        """Multithreaded version of get_max_range"""
+        fuel_weight_available = self.fuelweight*(1 - self.fuel_reserve_fraction)
+        weight = self.dryweight + self.fuelweight
+        total_distance = 0
+        time_elapsed = 0
+        iteration = 0
+        max_iterations = int(fuel_weight_available * self.fuel_specific_energy / (50000 * dt)) + 100
+        
+        while fuel_weight_available > 0 and iteration < max_iterations:
+            print("Fuel left: {:.1f} kg, Weight: {:.1f} kg".format(fuel_weight_available, weight))
+            print("Distance so far: {:.1f} km, Time elapsed: {:.1f} hours".format(total_distance/1000, time_elapsed/3600))
+            try:
+                best_speed, best_v_by_power = self.get_max_range_speed_mt(
+                    weight=weight, dV=dV, V_start=V_start, V_end=V_end, num_workers=num_workers
+                )
+                
+                if best_v_by_power <= 0:
+                    print("Warning: Invalid efficiency in range calculation")
+                    break
+                    
+                power_consumed = best_speed / best_v_by_power
+                fuel_consumed = power_consumed * dt / self.fuel_specific_energy
+                
+                if fuel_consumed > fuel_weight_available:
+                    partial_dt = fuel_weight_available * self.fuel_specific_energy / power_consumed
+                    total_distance += best_speed * partial_dt
+                    time_elapsed += partial_dt
+                    break
+                
+                total_distance += best_speed * dt
+                fuel_weight_available -= fuel_consumed
+                weight -= fuel_consumed
+                time_elapsed += dt
+                iteration += 1
+                
+            except Exception as e:
+                print(f"Error in range calculation at iteration {iteration}: {e}")
+                break
+        
+        return total_distance, time_elapsed
+
+    def get_endurance_mt(self, dV, V_start, V_end, dt=1000, num_workers=None, max_iterations=100):
+        """Multithreaded version of get_endurance"""
+        fuel_weight_available = self.fuelweight*(1 - self.fuel_reserve_fraction)
+        weight = self.dryweight + self.fuelweight
+        total_time = 0
+        iteration = 0
+        # max_iterations = int(fuel_weight_available * self.fuel_specific_energy / (50000 * dt)) + 100
+        
+        while fuel_weight_available > 0 and iteration < max_iterations:
+            try:
+                best_speed, least_power = self.get_max_endurance_speed_mt(
+                    weight=weight, dV=dV, V_start=V_start, V_end=V_end, num_workers=num_workers
+                )
+                
+                if least_power <= 0:
+                    print("Warning: Invalid power in endurance calculation")
+                    break
+                    
+                fuel_consumed = least_power * dt / self.fuel_specific_energy
+                
+                if fuel_consumed > fuel_weight_available:
+                    partial_dt = fuel_weight_available * self.fuel_specific_energy / least_power
+                    total_time += partial_dt
+                    break
+                
+                total_time += dt
+                fuel_weight_available -= fuel_consumed
+                weight -= fuel_consumed
+                iteration += 1
+                
+            except Exception as e:
+                print(f"Error in endurance calculation at iteration {iteration}: {e}")
+                break
+        
+        return total_time
+    def get_trim_conditions(self, V):
+        D = get_Parasitic_Drag(ρ=self.ρ, f=self.f, Vinfty=V)
+        T_Needed = get_Thrust_Total(W=(self.dryweight + self.fuelweight)*g, D=D)
+        trim_vals, trim_state_vals = trimSolve(rotor=self.rotor, Thrust_Needed=T_Needed, Ω=self.Ω, θ0_initial=5.015*deg_to_rad, θ1s_initial=-4.02*deg_to_rad, θ1c_initial=3*deg_to_rad, W=(self.dryweight + self.fuelweight)*g, D=D, coning_angle_iterations=2, β0_step_fraction=1.00, iterations=100, relaxation=0.3, verbose=False)
+        return trim_vals, trim_state_vals
+    
+
+NUMBER_OF_MAIN_ROTORS = 2
+NUMBER_OF_ENGINES = 2
+MASS_OF_CHINOOK = 3000 
+FUEL_WEIGHT = 800
+ENGINE_EFFICIENCY = 1
+RHO = 1.0  
+Ω = 15  # rad/s
+# if __name__ == "__main__":
+MAX_POWER = 200000  
+def test_endurance_and_range(mp1:MissionPlanner):
+    
+    import time
+    start_time = time.time()
+    range_m, time_s = mp1.get_max_range(dV=40, V_start=10, V_end=150, dt=3000)
+    end_time = time.time()
+    print(f"Max Range: {range_m/1000:.1f} km in {time_s/3600:.1f} hours")
+    print(f"Range calculation took {end_time - start_time:.1f} seconds")
+    
+    start_time = time.time()
+    endurance_s = mp1.get_endurance(dV=10, V_start=10, V_end=50, dt=3600)
+    end_time = time.time()
+    print(f"Max Endurance: {endurance_s/3600:.1f} hours")
+    print(f"Endurance calculation took {end_time - start_time:.1f} seconds")
+    
+    
+def test_max_speed_power_constraint(vmin:130, vmax=250, dv=10):
+    rotor = Rotor(rotor_mass=150, blade_count=3, R=12, rc=0.4, chord_function=lambda r: 0.5, θtw=θtw, ρ=RHO)  # Smaller rotor radius
+    for v in range(vmin, vmax+1, dv):
+        D = get_Parasitic_Drag(ρ=1.225, f=0.4, Vinfty=v)
+        T_Needed = get_Thrust_Total(W=(MASS_OF_CHINOOK/NUMBER_OF_MAIN_ROTORS)*g, D=D)
+        rotor.set_calculation_batch_properties(Thrust_Needed=T_Needed, Ω=Ω, θ0=5.015*deg_to_rad, θ1s=-4.02*deg_to_rad, θ1c=3*deg_to_rad)
+        try:
+            _, trim_state_vals = trimSolve(rotor=rotor, Thrust_Needed=T_Needed, Ω=Ω, θ0_initial=5.015*deg_to_rad, θ1s_initial=-4.02*deg_to_rad, θ1c_initial=3*deg_to_rad, W=(MASS_OF_CHINOOK/NUMBER_OF_MAIN_ROTORS)*g, D=D, coning_angle_iterations=2, β0_step_fraction=1.00, iterations=10, relaxation=0.3, verbose=False)
+            trim_power = trim_state_vals[2]
+            print(f"V={v} m/s: Power={trim_power/1000:.1f} kW")
+            if trim_power > MAX_POWER:
+                print("Power exceeds 200 kW limit!")
+                print("Velocity is: ", v)
+                break
+        except Exception as e:
+            print(f"Warning: Trim solve failed at V={v} m/s: {e}")
+            continue
+
+
+
+if __name__ == "__main__":
+    # test_max_speed_power_constraint(vmin=130, vmax=250, dv=10)
+    
+    rotor = Rotor(rotor_mass=150, blade_count=3, R=12, rc=0.4, chord_function=lambda r: 0.5, θtw=θtw, ρ=RHO)  # Smaller rotor radius
+    mp1 = MissionPlanner(rotor=rotor, Ω=Ω, f=0.4, fuelweight=FUEL_WEIGHT/NUMBER_OF_MAIN_ROTORS, dryweight=(MASS_OF_CHINOOK-FUEL_WEIGHT)/NUMBER_OF_MAIN_ROTORS, fuel_specific_energy=43e6*ENGINE_EFFICIENCY, fuel_reserve_fraction=0.15)
+    trims, trim_out = mp1.get_trim_conditions(V=111)
+    print("Θ0 (deg):", trims[0]/deg_to_rad)
+    print("Θ1s (deg):", trims[1]/deg_to_rad)
+    print("Θ1c (deg):", trims[2]/deg_to_rad)
+    print("Thrust (N):", trim_out[0])
+    print("Moments (N·m):")
+    print(" Mx:", trim_out[1][0])
+    print(" My:", trim_out[1][1])
+    print(" Mz:", trim_out[1][2])
+    print("Power (kW):", trim_out[2]/1000)
+        
+    
             
             
         
-        
-        
-        
-            
-        
-    # def set_flight_parameters(self):
-    #     self.flight_parameters_set = True
-    #     self.dry_weight = float(input("Enter the dry weight of the helicopter in kg: "))
-    #     self.fuel_weight = float(input("Enter the fuel weight of the helicopter in kg: "))
-    #     self.fuel_specific_energy = 1000*float(input("Enter the fuel specific energy in kJ/kg: "))
-    #     reserve_fuel_fraction  = float(input("Enter the reserve fuel fraction (e.g., 0.2 for 20%): "))
-    #     self.reserved_fuel = self.fuel_weight * reserve_fuel_fraction
-    #     self.fuel_weight -= self.reserved_fuel
-    #     self.dry_weight += self.reserved_fuel
-    #     # self.min_fuel = self.fuel_weight * reserve_fuel_fraction
-    #     self.max_fuel = self.fuel_weight + self.reserved_fuel
-
-    # def set_flight_parameters_programmatic(self, dry_weight: float, fuel_weight: float, 
-    #                                       fuel_specific_energy_kj_kg: float, reserve_fuel_fraction: float):
-    #     """Set flight parameters programmatically for testing"""
-    #     self.flight_parameters_set = True
-    #     self.dry_weight = dry_weight
-    #     self.fuel_weight = fuel_weight
-    #     self.fuel_specific_energy = 1000 * fuel_specific_energy_kj_kg  # Convert kJ/kg to J/kg
-    #     self.reserved_fuel = self.fuel_weight * reserve_fuel_fraction
-    #     self.fuel_weight -= self.reserved_fuel
-    #     self.dry_weight += self.reserved_fuel
-    #     # self.min_fuel = self.fuel_weight * reserve_fuel_fraction
-    #     self.max_fuel = self.fuel_weight + self.reserved_fuel
-
-
-    
     
