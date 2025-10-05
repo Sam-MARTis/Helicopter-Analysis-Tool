@@ -388,6 +388,87 @@ T_tail -> My
 
 """
 
+g = 9.81
+
+
+class MissionPlanner:
+    def __init__(self, f, fuelweight, dryweight, fuel_specific_energy, fuel_reserve_fraction = 0.2):
+        self.ρ = 1.225 
+        self.f = f
+        self.fuelweight = fuelweight
+        self.dryweight = dryweight
+        self.fuel_specific_energy = fuel_specific_energy  # in J/kg
+        self.fuel_reserve_fraction = fuel_reserve_fraction
+        self.rotor = Rotor(rotor_mass=150, blade_count=4, R=5, rc=0.2, chord_function=lambda r: 0.3, θtw=θtw, ρ=self.ρ) 
+        
+        
+
+    def get_max_range_speed(self, weight, dV = 30, V_start = 10, V_end = 200) -> Tuple[float, float]:
+        best_v_by_power = 0
+        best_speed = V_start
+        V_by_power = {}
+        for V in np.arange(V_start, V_end, dV):
+            D = get_Parasitic_Drag(ρ=self.ρ, f=self.f, Vinfty=V)
+            T_Needed = get_Thrust_Total(W=weight*g, D=D)
+            # self.rotor.set_calculation_batch_properties(Thrust_Needed=T_Needed, Ω=20, θ0=5.015*deg_to_rad, θ1s=-4.02*deg_to_rad, θ1c=3*deg_to_rad)
+            _, trim_state_vals = trimSolve(rotor=self.rotor, Thrust_Needed=T_Needed, Ω=20, θ0_initial=5.015*deg_to_rad, θ1s_initial=-4.02*deg_to_rad, θ1c_initial=3*deg_to_rad, W=self.dryweight, D=D, coning_angle_iterations=2, β0_step_fraction=1.00, iterations=10, relaxation=0.8, verbose=False)
+            trim_power = trim_state_vals[2]
+            V_by_power[V] = V/trim_power
+        
+        # Return the best V
+        for V, val in V_by_power.items():
+            if val > best_v_by_power:
+                best_v_by_power = val
+                best_speed = V
+        return best_speed, best_v_by_power
+    
+    def get_max_range(self, dV, V_start, V_end, dt=600):
+        fuel_weight_available = self.fuelweight*(1 - self.fuel_reserve_fraction)
+        weight = self.dryweight + self.fuelweight
+        total_distance = 0
+        time_elapsed = 0
+        while fuel_weight_available > 0:
+            best_speed, best_v_by_power = self.get_max_range_speed(weight=weight, dV=dV, V_start=V_start, V_end=V_end)
+            power_consumed = best_speed / best_v_by_power
+            fuel_consumed = power_consumed * dt / self.fuel_specific_energy
+            total_distance += best_speed * dt
+            fuel_weight_available -= fuel_consumed
+            weight -= fuel_consumed
+            time_elapsed += dt
+        
+        return total_distance, time_elapsed
+    
+    def get_max_endurance_speed(self, weight, dV = 5, V_start = 10, V_end = 100) -> Tuple[float, float]:
+        least_power = float('inf')
+        best_speed = V_start
+        V_power = {}
+        for V in np.arange(V_start, V_end, dV):
+            D = get_Parasitic_Drag(ρ=self.ρ, f=self.f, Vinfty=V)
+            T_Needed = get_Thrust_Total(W=weight*g, D=D)
+            # self.rotor.set_calculation_batch_properties(Thrust_Needed=T_Needed, Ω=20, θ0=5.015*deg_to_rad, θ1s=-4.02*deg_to_rad, θ1c=3*deg_to_rad)
+            _, trim_state_vals = trimSolve(rotor=self.rotor, Thrust_Needed=T_Needed, Ω=20, θ0_initial=5.015*deg_to_rad, θ1s_initial=-4.02*deg_to_rad, θ1c_initial=3*deg_to_rad, W=self.dryweight, D=D, coning_angle_iterations=2, β0_step_fraction=1.00, iterations=10, relaxation=0.8, verbose=False)
+            trim_power = trim_state_vals[2]
+            V_power[V] = trim_power
+            if trim_power < least_power:
+                least_power = trim_power
+                best_speed = V
+        return best_speed, least_power
+    
+    def get_endurance(self, dV, V_start, V_end, dt=600):
+        fuel_weight_available = self.fuelweight*(1 - self.fuel_reserve_fraction)
+        weight = self.dryweight + self.fuelweight
+        total_time = 0
+        while fuel_weight_available > 0:
+            best_speed, least_power = self.get_max_endurance_speed(weight=weight, dV=dV, V_start=V_start, V_end=V_end)
+            fuel_consumed = least_power * dt / self.fuel_specific_energy
+            total_time += dt
+            fuel_weight_available -= fuel_consumed
+            weight -= fuel_consumed
+        
+        return total_time
+    
+    
+    
         
             
             
