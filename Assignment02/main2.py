@@ -45,14 +45,14 @@ class Blade:
         self.dψ = 2 * np.pi / self.ψ_divisions
         
 
-        # Quantities to store: v, α_effective, dL, dD, v, dTorque, 
-        self.mesh = np.zeros((self.r_divisions, self.ψ_divisions, 6))
+        # Quantities to store: v, α_effective, Up, dT, dL, dD, dTorque, 
+        self.mesh = np.zeros((self.r_divisions, self.ψ_divisions, 7))
     def set_mesh(self, r_divisions, ψ_divisions):
         self.r_divisions = r_divisions
         self.ψ_divisions = ψ_divisions
         self.dr = (self.R - self.rc)/ self.r_divisions
         self.dψ = 2 * np.pi / self.ψ_divisions
-        self.mesh = np.zeros((self.r_divisions, self.ψ_divisions, 6))
+        self.mesh = np.zeros((self.r_divisions, self.ψ_divisions, 7))
 
     def map_r_ψ_to_mesh_indices(self, r, ψ) -> Tuple[int, int]:
         if r < self.rc or r > self.R:
@@ -118,55 +118,72 @@ class Blade:
         λi = self.λi_Glaubert*(1 + (num/den))
         return λi * self.Ω * self.R
     
-    def get_effective_aoa(self, r, ψ):
+    def get_effective_aoa(self, r, ψ, set_u_vels = True):
+        i, j = self.map_r_ψ_to_mesh_indices(r, ψ)
         v = self.mesh[i, j, 0]
         dβ_by_dt = -self.α_tpp *(sin(ψ)*self.Ω)
         Up = v + r*dβ_by_dt + self.Vinfty * sin(self.β0) * cos(ψ) + self.Vinfty * sin(self.α_tpp)
         Ut = self.Ω * r + self.Vinfty * cos(self.α_tpp) * sin(ψ)
+        if(set_u_vels):
+            self.mesh[i, j, 2] = Up
+            self.mesh[i, j, 3] = Ut
         θ = self.θ1s * sin(ψ) + self.θ1c * cos(ψ) + self.θ0 + self.θtw * (r) - atan((Up) / (Ut))
         return θ
+    
     def get_β0(self, β0_previous = None, set=False):
         β0_previous = self.β0 if β0_previous is None else β0_previous
-        dr = (self.R - self.rc)/ self.r_divisions
-        dψ = 
+
         internal_sum = 0
         for i in range(self.r_divisions):
-            r = self.rc + (i + 0.5) * dr
-            c = self.chord_function(r)
-            θ = self.get_effective_aoa(r, 0)
-            Cl = self.a * θ
-            dS = 0.5 * self.rho * r*r*r * Cl * dr
-            internal_sum += dS
-        # return internal_sum
-        β0 = internal_sum/self.I
+            for j in range(self.ψ_divisions):
+                r, ψ = self.map_mesh_indices_to_r_ψ(i, j)
+                θ = self.get_effective_aoa(r, ψ)
+                Cl = self.a * θ
+                c = self.chord_function(r)
+                dS = 0.5 * self.rho * r*r * c * Cl * self.dr * self.dψ
+                internal_sum += dS
+        β0 = internal_sum/(self.I * 2*np.pi)
+        
         if set:
             self.β0 = β0
         return β0
+    
+    
     def update_grid_induced_velocity(self):
         for i in range(self.r_divisions):
-            r = self.rc + (i + 0.5) * (self.R - self.rc)/ self.r_divisions
             for j in range(self.ψ_divisions):
-                ψ = (j + 0.5) * 2 * np.pi / self.ψ_divisions
+                r, ψ = self.map_mesh_indices_to_r_ψ(i, j)
                 v = self.get_v(r, ψ)
+                self.mesh[i, j, 0] = v
+    def update_grid_effective_aoa_and_U_vels(self):
+        for i in range(self.r_divisions):
+            for j in range(self.ψ_divisions):
+                r, ψ = self.map_mesh_indices_to_r_ψ(i, j)
                 θ = self.get_effective_aoa(r, ψ)
-                self.discretitization[i, j, 0] = v
-                self.discretitization[i, j, 1] = θ
-        
-        
-    def caclulate_primary_derived_quantities(self, W, D, coning_angle_iterations = 5, step_fraction = 0.6):
+                self.mesh[i, j, 1] = θ
+
+    def calculate_primary_derived_quantities(self, W, D, coning_angle_iterations = 5, step_fraction = 0.6):
         self.get_Area_Disc()
         self.get_Ct()
         self.get_α_tpp(W, D)
         self.get_mu()
         self.get_λi_Glaubert()
         self.get_λG()
+        self.β0 = 0
+        self.update_grid_induced_velocity()
+        self.update_grid_effective_aoa_and_U_vels()
         
         for _ in range(coning_angle_iterations):
             
             β0 = self.get_β0()
             dβ0 = β0 - self.β0
             self.β0 = self.β0 + step_fraction * dβ0
-        return self.β0
+            self.update_grid_effective_aoa_and_U_vels()
+        
+        
+        
+    
+    
     
     
     
