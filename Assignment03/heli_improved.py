@@ -249,9 +249,9 @@ class Rotor:
         assert self.environment.environment_set, "Environment parameters not set. Please set them using 'set_atmosphere_parameters' method."
         density = self.environment.get_density(altitude)
         sound_speed = self.environment.get_speed_of_sound(altitude)
-        print("Rmin:", self.root_cutout, "Rmax:", self.radius_of_rotors, "Blades:", self.number_of_blades)
-        print("rp:", np.degrees(self.root_pitch), "sp:", np.degrees(self.slope_pitch), "rc:", self.root_chord, "tc:", self.tip_chord)
-        print("Vy:", Vy + self.environment.wind_velocity, "Ω:", Ω, "Altitude:", altitude, "Density:", density, "Sound Speed:", sound_speed)
+        # print("Rmin:", self.root_cutout, "Rmax:", self.radius_of_rotors, "Blades:", self.number_of_blades)
+        # print("rp:", np.degrees(self.root_pitch), "sp:", np.degrees(self.slope_pitch), "rc:", self.root_chord, "tc:", self.tip_chord)
+        # print("Vy:", Vy + self.environment.wind_velocity, "Ω:", Ω, "Altitude:", altitude, "Density:", density, "Sound Speed:", sound_speed)
         values = get_rotor_outputs(rmin=self.root_cutout, rmax=self.radius_of_rotors, b=self.number_of_blades,
                                   rp=self.root_pitch, sp=self.slope_pitch, rc=self.root_chord, tc=self.tip_chord,
                                   Vy=Vy + self.environment.wind_velocity, Ω=Ω, sound_speed=sound_speed, density=density,
